@@ -1,0 +1,24 @@
+.env
+.env.*
+!.env.example
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local test and tool state
+.test_tmp/
+.superpowers/
+
+# Local logs
+*.log
+
+# Large local drawing datasets
+data/
+
+# Local Neo4j/runtime state
+neo4j/
+
+# Local agent state
+.agents/
