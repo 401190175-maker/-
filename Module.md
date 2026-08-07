@@ -27,6 +27,10 @@
 - `src/drawing_graph/section_match_service.py`：基于双方可比较 `TextObservation` 生成 `CANDIDATE_MATCHES_SECTION_CAPTION` 候选；仅在逻辑键一致、候选唯一且无冲突时给出正式匹配判断。
 - `src/drawing_graph/tool_factory.py`：集中创建 facade 依赖；`create_tool_facade()` 装配内存语义依赖用于本地/单元测试，`create_neo4j_tool_facade(driver, source_fact_reader=None, config=None)` 用外部注入的 driver 装配 `QueryServiceReadPortAdapter`、`SemanticNeo4jRepository`、`RelationRepositoryCandidateRelationPort`、`RelationRepositorySectionMatchPort`、`RelationRepositorySectionMatchQueryPort` 和候选复核写回服务；模块 import 和工厂创建时不创建 Neo4j driver、不主动连接数据库、不扫描数据目录。
 - `scripts/drawing_graph_tool.py`：薄 CLI adapter；它从 `ImportConfig.from_env()` 读取 Neo4j 连接配置，创建 driver 后调用 `create_neo4j_tool_facade()`，再把 facade DTO 输出为 JSON。它不保存 Neo4j 密码，不写 Cypher，不直接调用 repository、import CLI 或离线增强规则，不提供 HTTP API。
+- `src/drawing_graph/qa_models.py`：定义 QA 层稳定数据契约，包括 `QuestionType`、`QAScope`、`QARequest`、`EvidenceRef`、`AnswerFact`、`QAAnswer`、`QAError` 和 `QAErrorCode`；DTO 不暴露 Neo4j driver、session、transaction 或 Cypher，`fact_kind` 严格区分来源事实、派生关系、语义观察、语义解释、候选关系、正式关系和诊断/未支持条目。
+- `src/drawing_graph/qa_service.py`：实现 `DrawingGraphQAService`，作为 facade 外侧的问答编排层；只接收注入的 facade，负责问题类型路由、scope 校验、write-back 禁止、调用 facade 聚合证据并返回结构化 `QAAnswer`。
+- `src/drawing_graph/qa_rendering.py`：将结构化 `QAAnswer` 渲染为简短中文文本，供 CLI `--format zh-brief` 使用；只读取 `QAAnswer`，不调用 facade、不访问 Neo4j，JSON 仍是权威输出。
+- `scripts/drawing_graph_qa.py`：薄 QA CLI adapter；从环境变量读取 Neo4j 配置，创建 driver 和 facade，再调用 `DrawingGraphQAService.ask()`，支持 JSON 与简短中文输出。它只做参数解析、连接生命周期、错误脱敏和输出渲染，不直接调用 `QueryService`、`RelationRepository`、Cypher 或底层导入/增强脚本。
 
 既有模块仍保持原职责：`src/drawing_graph/block_relation_enrichment.py` 负责离线派生关系计算，`src/drawing_graph/relation_repository.py` 负责受控关系写入、候选提升、候选关系读取、断面匹配读取和 `RelationRepositorySectionMatchPort` 适配，`src/drawing_graph/relation_service.py` 负责编排显式离线增强，`src/drawing_graph/candidate_review.py` 保留 `CandidateReviewService.review_candidate_group`、三态审核和硬规则。`scripts/review_candidate_relations.py` 仍是显式候选关系 AI 复核 CLI 入口；复核记录使用 `review_run_id` 回查一次复核运行。
 
@@ -47,11 +51,13 @@
 - `DrawingGraphToolFacade.review_candidate_relation(...)`：显式审核候选关系；`write_back=false` 只返回 dry-run 结果，`write_back=true` 才通过 `CandidateReviewService` 和硬规则写回。
 - `create_neo4j_tool_facade(driver, source_fact_reader=None, config=None)`：用调用方提供的 Neo4j driver 创建真实端口装配的 facade；它不接收 Neo4j URI、用户、密码或供应商密钥，连接生命周期仍由调用方管理。
 - `scripts\drawing_graph_tool.py list-drawing-sets|list-pages|page-source-facts|block-trace|block-relations|list-text-observations|list-interpretations|list-candidate-relations|list-section-matches`：当前已落地的 CLI 调用入口，参数映射到 facade 只读查询方法并输出 JSON；命令失败时返回结构化错误 category，低层 Neo4j/Cypher/密钥细节会被清洗。
+- `DrawingGraphQAService(facade)` 与 `DrawingGraphQAService.ask(request) -> QAAnswer`：QA 编排唯一入口；`request` 必须是 `QARequest`，`write_back=true` 会被 `WRITE_BACK_FORBIDDEN` 拒绝，第一阶段只读。
+- `scripts\drawing_graph_qa.py ask-page|ask-block|ask-candidates|ask-section|ask-table-caption|diagnose`：QA CLI 子命令，映射到 `page_summary`、`block_relations`、`candidate_relations`、`section_matches`、`table_caption_status`、`diagnostic_status`；`--format json` 为默认输出，`--format zh-brief` 输出简短中文。
 - `RelationRepository.update_candidate_review` 与 `RelationRepository.promote_candidate_relation` 仍是底层受控写回接口，不由 Tool adapter 直接调用。
 
 ## 3. 新依赖
 
-新增依赖都是项目内 Python port、fake 实现或 Python 标准库 CLI/JSON 支撑：`DrawingGraphReadPort`、`MultimodalRecognitionClient`、`RecognitionRunLogPort`、`SemanticEvidenceRepositoryPort`、`SectionMatchWritePort`、`SectionMatchQueryPort`、`SemanticCacheService`、`SemanticPayloadStore`。当前未新增真实云模型 SDK、HTTP 框架或 MCP Tool adapter 依赖。
+新增依赖都是项目内 Python port、fake 实现或 Python 标准库 CLI/JSON 支撑：`DrawingGraphReadPort`、`MultimodalRecognitionClient`、`RecognitionRunLogPort`、`SemanticEvidenceRepositoryPort`、`SectionMatchWritePort`、`SectionMatchQueryPort`、`SemanticCacheService`、`SemanticPayloadStore`，以及 QA 层的 `QARequest`、`QAAnswer`、`AnswerFact`、`EvidenceRef` 等 QA DTO。当前未新增真实云模型 SDK、HTTP 框架或 MCP Tool adapter 依赖。
 
 `ToolFacadeConfig` 只接收 `default_write_back`、`model_profile`、`prompt_version`、`run_log_path`、`run_log_store`、`payload_store`、`semantic_repository`、`cache_store`、`section_match_rule_version` 等受控配置，不接收 Neo4j 密码、供应商 API key、token 或 secret。真实 Neo4j 集成测试仍需要单独配置 `NEO4J_TEST_URI`、`NEO4J_TEST_USER` 和 `NEO4J_TEST_PASSWORD`；跳过不等于通过。
 
@@ -69,6 +75,8 @@
 ## 5. 架构变化
 
 当前依赖方向是：薄 CLI adapter 或项目级 Skill（`.codex\skills\drawing-graph-operator\`）-> `DrawingGraphToolFacade` -> read port / semantic service / run log port / semantic repository / section match service / candidate review service -> 受控 repository。facade 不写 Cypher，不创建 Neo4j driver，不调用 CLI 脚本，不直接调用 `block_relation_enrichment.py` 的规则函数。Neo4j 生产装配由 `create_neo4j_tool_facade()` 完成；`scripts\drawing_graph_tool.py` 只在最外层读取环境变量、创建 driver、关闭 driver 并输出 JSON，driver 和 secret 仍由外部运行环境提供。
+
+QA 编排层位于 facade 外侧，依赖方向为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`。`scripts\drawing_graph_qa.py` 是最外层 adapter，`DrawingGraphQAService` 只通过 `DrawingGraphToolFacade` 获取图谱信息，默认 `write_back=false`，不写 Cypher、不持久化语义证据、不提升候选关系。第一阶段不实现 HTTP API、MCP Tool adapter、Ava 对接、OCR、真实模型供应商和数据库 schema 变更。
 
 `write_back=false` 是默认安全边界。dry-run 识别可以返回临时 `recognition_run_id`、observation 和 interpretation，但不保证之后可查询。`write_back=true` 时才写入图谱外 run log、图谱内语义证据或受控语义边；候选关系即使 accepted，也必须通过 `CandidateReviewService.review_candidate_group` 的硬规则后才可能调用 `RelationRepository.promote_candidate_relation`。断面匹配的正式边同样只在逻辑键一致、候选唯一且无冲突时写入。
 

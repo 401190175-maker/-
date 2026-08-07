@@ -22,6 +22,8 @@ Project -> DrawingSet -> DrawingPage -> DrawingBlock
 
 当前实现状态：基础 Neo4j 导入闭环、离线派生关系增强闭环和候选关系复核骨架已经完成。基础导入负责来源事实层的稳定入库与追溯；离线增强负责 `Table -[:HAS_CAPTION]-> TableCaption`、`DrawingPage -[:USES_BASIC_INFO]-> DrawingBasicInfo`、`DrawingBlock` 起点的 `HAS_CAPTION`、`HAS_ANNOTATION`、`HAS_SECTION_MARK` 正式派生关系，以及 `CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK` 空间候选关系。候选关系 AI 复核是独立显式流程，不挂到基础导入或默认离线增强；查询侧通过 `get_block_trace()` 和 `get_block_relations()` 返回可复核的业务 ID、图片路径、bbox、候选 ID 和增强状态。
 
+QA 编排层已落地：`DrawingGraphQAService`（`src/drawing_graph/qa_service.py`）与薄 QA CLI（`scripts\drawing_graph_qa.py`）位于 `DrawingGraphToolFacade` 外侧，默认只读（`write_back=false`），只通过 facade 获取图谱信息，不直接访问 Neo4j driver、Cypher、repository 写回方法或离线规则函数；结构化 `QAAnswer` 按 `source_fact`、`derived_relation`、`semantic_observation`、`semantic_interpretation`、`candidate_relation`、`formal_relation`、`diagnostic`、`unsupported` 分层输出。
+
 ## 2. 整体分层
 
 系统采用模块化 ETL、离线增强、显式候选复核和按需语义证据架构：
@@ -64,6 +66,12 @@ Project -> DrawingSet -> DrawingPage -> DrawingBlock
   -> 符号体系与逻辑键规范化
   -> 同页候选比较和别名规则检查
   -> CANDIDATE_MATCHES_SECTION_CAPTION 或 MATCHES_SECTION_CAPTION
+
+QA 编排入口（第一阶段）
+  -> QA adapter（scripts\drawing_graph_qa.py）
+  -> DrawingGraphQAService
+  -> DrawingGraphToolFacade
+  -> ports / services / repository / Neo4j
 ```
 
 分层原则：
@@ -71,6 +79,7 @@ Project -> DrawingSet -> DrawingPage -> DrawingBlock
 - `scripts/import_json.py` 只负责基础导入的命令行参数、配置加载和服务编排，不自动触发表格标题或 block 级派生关系增强。
 - `scripts/enrich_block_relations.py` 作为兼容入口名称保留，只负责离线派生关系增强的命令行参数、配置加载、增强范围创建和服务调用，不包含匹配规则或 Cypher 细节，也不自动运行 AI 候选复核。
 - `scripts/review_candidate_relations.py` 是候选关系 AI 复核的显式入口，只通过注入客户端和服务接口处理 `accepted`、`rejected`、`unresolved` 三态结果。
+- QA 层依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`；QAService 不创建 Neo4j driver、不写 Cypher、不读取环境变量，adapter 只在最外层管理 driver 生命周期。
 - 业务逻辑集中在 `src/drawing_graph/`，按扫描、校验、规范化、映射、持久化、审计、查询和关系增强拆分。
 - Schema 初始化和数据导入分离，导入过程不隐式修改数据库结构。
 - Neo4j 写入使用稳定业务 ID、固定标签/关系白名单和参数化 Cypher。
@@ -399,6 +408,7 @@ JSON 文件
 - 不让基础导入流程自动触发离线派生关系增强。
 - 不让离线派生关系增强默认触发候选关系 AI 复核；复核必须通过显式命令或服务调用执行。
 - 不把 `CANDIDATE_*` 候选关系当作正式事实；只有 accepted 且通过硬性规则校验的候选才能提升为正式关系。
+- QA 编排第一阶段默认只读、`write_back=false`；候选关系不是正式事实，`matched_candidate` 不写成正式图谱关系；QAService 不直接写 Cypher。第一阶段不实现 HTTP API、MCP Tool adapter、Ava 对接、OCR、真实模型供应商和数据库 schema 变更。
 
 这些边界使当前阶段聚焦在可重复导入、稳定 ID、图谱层级、位置证据、离线可审计关系增强和查询追溯闭环上。
 

@@ -236,7 +236,21 @@ Tool facade 的单元测试不需要真实 Neo4j 或真实云模型。真实 Neo
 
 `get_block_relations(block_id)` 返回 `caption_ids`、`basic_info_ids`、`basic_info_status`、`basic_info_source`、`annotation_ids`、`section_mark_ids`、`candidate_caption_ids`、`candidate_section_mark_ids` 和 `relation_status`。`basic_info_ids` 通过 `DrawingBlock <-[:HAS_BLOCK]- DrawingPage -[:HAS_BASIC_INFO|USES_BASIC_INFO]-> DrawingBasicInfo` 页面路径读取；历史 block 级基础信息关系只作为迁移兼容对象，不优先返回。`section_mark_ids` 是该图块已经通过 `HAS_SECTION_MARK` 关联的 `CrossSection` 稳定业务 ID 列表。`relation_status` 为 `not_enhanced` 表示该 block 尚无派生关系；`enhanced` 表示 caption、basic info、annotation 和 section mark 四组正式派生关系都存在；`partial` 表示只存在部分正式派生关系；`candidate` 表示存在尚未提升为正式事实的候选关系。该查询只返回 ID 和状态，不返回 OCR 文本 `caption_text` 或 `section_text`，也不返回 Agent 推理字段 `reason`。
 
-## 8. 测试命令
+## 8. QA 问答 CLI（第一阶段）
+
+`scripts\drawing_graph_qa.py` 是 facade 外侧的薄 QA CLI：它读取环境变量创建 driver 和 facade，再调用 `DrawingGraphQAService` 回答结构化问题。QA 层默认只读，`write_back=false`；候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系；QAService 不直接写 Cypher，不直接访问 Neo4j driver、repository 或离线规则函数。
+
+最短使用示例：
+
+```powershell
+python scripts\drawing_graph_qa.py ask-page --page-id page:road-project:lslq_yhd_2_1:road_24 --format json
+python scripts\drawing_graph_qa.py ask-block --block-id block:road-project:lslq_yhd_2_1:road_24:<shape_hash> --format zh-brief
+python scripts\drawing_graph_qa.py ask-candidates --page-id page:road-project:lslq_yhd_2_1:road_24 --format json
+```
+
+输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。第一阶段不实现 HTTP API、MCP Tool adapter、Ava 对接、OCR、真实模型供应商和数据库 schema 变更。
+
+## 9. 测试命令
 
 333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收已记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。该记录使用 `road-full-20260807-acceptance` 前缀保留验收数据，便于 Neo4j Browser 复查；真实密码未写入仓库文件。
 
@@ -283,7 +297,7 @@ python -m unittest tests.integration.test_neo4j_semantic_evidence -v
 
 集成测试会初始化 Schema、导入样例页面、验证重复导入幂等性、基础导入不写 `Table -[:HAS_CAPTION]-> TableCaption`、离线派生关系增强幂等性、表格标题 legacy 兼容、`USES_BASIC_INFO`、`CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK`、`HAS_SECTION_MARK` 写入和查询闭环，并验证语义证据层 live Neo4j 闭环：`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`、`HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`、`CANDIDATE_MATCHES_SECTION_CAPTION`、`MATCHES_SECTION_CAPTION` 的真实写入、幂等和查询投影，同时确认不创建 `RecognitionRun` 图谱节点。测试结束后会清理本轮测试数据。
 
-## 9. 常见错误
+## 10. 常见错误
 
 - `DRAWING_GRAPH_DATA_ROOT is required`：缺少必需环境变量，按第 2 节设置后重试。
 - `DRAWING_GRAPH_BATCH_SIZE must be a positive integer`：批量大小不是正整数。
