@@ -2,6 +2,8 @@
 
 本文给出从本机数据到 Neo4j 图谱再到 CLI 查询的最短运行流程。它面向使用者，不要求先理解内部 facade、repository 或语义证据层实现。
 
+本仓库已有两份验收记录可对照：`E2E_CLI_ACCEPTANCE.md` 记录单页真实 Neo4j CLI 链路，`FULL_DATA_ACCEPTANCE.md` 记录 333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收。
+
 ## 1. 准备环境
 
 安装依赖：
@@ -168,3 +170,5 @@ python -m unittest discover tests.integration -v
 ```
 
 如果集成测试被跳过，跳过不等于通过。
+
+全量验收参考命令与统计口径见 `FULL_DATA_ACCEPTANCE.md`。如果复跑全量验收，建议使用新的 `DRAWING_GRAPH_PROJECT_SLUG`，避免和已保留的 `road-full-20260807-acceptance` 数据混在一起。

@@ -4,7 +4,7 @@
 
 当前闭环状态：基础导入、离线派生关系增强、候选关系复核服务骨架和查询验证已经形成流程。推荐运行顺序是初始化 Schema，执行 `scripts\import_json.py all` 写入来源事实，再显式执行 `scripts\enrich_block_relations.py project --rule-version <version>` 写入表格标题、页面级基础信息上下文、block 级正式派生关系和空间候选边；如需复核候选关系，再显式执行 `scripts\review_candidate_relations.py candidate-group ...`。最后用 `QueryService.get_block_trace()` 和 `QueryService.get_block_relations()` 验证单个图块的位置证据、候选 ID 与派生关系状态。
 
-模块职责、新接口、新依赖、数据变化和架构变化见 `Module.md`；该文档按当前代码实现记录维护边界，不把未实现的 OCR、完整语义证据层、HTTP API 或 Agent Skill 当作已完成能力。端到端 CLI 验收证据见 `E2E_CLI_ACCEPTANCE.md`，面向普通用户的最短运行流程见 `USER_RUNBOOK.md`。
+模块职责、新接口、新依赖、数据变化和架构变化见 `Module.md`；该文档按当前代码实现记录维护边界，不把未实现的 OCR、HTTP API、Agent Skill、MCP Tool adapter 或全量自动语义扫描当作已完成能力。单页端到端 CLI 验收证据见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收证据见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`，面向普通用户的最短运行流程见 `docs/acceptance/USER_RUNBOOK.md`。
 
 当前还新增了 Python 应用层 `DrawingGraphToolFacade`，以及 `scripts\drawing_graph_tool.py` 这个薄 CLI adapter。CLI adapter 只负责从环境变量读取 Neo4j 连接配置、创建 driver、调用 facade 并输出 JSON；它不保存 Neo4j 密码，不暴露 Cypher，不提供 HTTP API，也不是 Agent Skill 或 MCP Tool adapter。facade 默认 `write_back=false`：查询为只读，语义识别为 dry-run，只返回临时 `recognition_run_id`、observation 和 interpretation；只有显式 `write_back=true` 才写入图谱外 run log 和图谱内语义证据。`RecognitionRun` 图谱外，`TextObservation` 图谱内，候选关系不是正式事实，`matched_candidate` 也不能当作正式图谱关系。
 
@@ -237,6 +237,8 @@ Tool facade 的单元测试不需要真实 Neo4j 或真实云模型。真实 Neo
 `get_block_relations(block_id)` 返回 `caption_ids`、`basic_info_ids`、`basic_info_status`、`basic_info_source`、`annotation_ids`、`section_mark_ids`、`candidate_caption_ids`、`candidate_section_mark_ids` 和 `relation_status`。`basic_info_ids` 通过 `DrawingBlock <-[:HAS_BLOCK]- DrawingPage -[:HAS_BASIC_INFO|USES_BASIC_INFO]-> DrawingBasicInfo` 页面路径读取；历史 block 级基础信息关系只作为迁移兼容对象，不优先返回。`section_mark_ids` 是该图块已经通过 `HAS_SECTION_MARK` 关联的 `CrossSection` 稳定业务 ID 列表。`relation_status` 为 `not_enhanced` 表示该 block 尚无派生关系；`enhanced` 表示 caption、basic info、annotation 和 section mark 四组正式派生关系都存在；`partial` 表示只存在部分正式派生关系；`candidate` 表示存在尚未提升为正式事实的候选关系。该查询只返回 ID 和状态，不返回 OCR 文本 `caption_text` 或 `section_text`，也不返回 Agent 推理字段 `reason`。
 
 ## 8. 测试命令
+
+333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收已记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。该记录使用 `road-full-20260807-acceptance` 前缀保留验收数据，便于 Neo4j Browser 复查；真实密码未写入仓库文件。
 
 运行 Task 27 的独立测试：
 

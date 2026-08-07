@@ -18,7 +18,7 @@ Project -> DrawingSet -> DrawingPage -> DrawingBlock
 当前阶段仍不包含 OCR、Agent Skill、HTTP/REST API、全量自动语义扫描、默认真实云模型调用、`NEAR` 空间关系网络，也不设置或推断 `DrawingBlock.block_type`。
 `MATCHES_SECTION_CAPTION`（`CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`）不是默认生成关系；只有在双方存在可比较 `TextObservation`、规范化逻辑键一致、同页候选唯一且无规则冲突时才可作为正式语义关系写入。证据不足、多候选、跨页或规则边界不明确时，只返回或写入 `CANDIDATE_MATCHES_SECTION_CAPTION`，不得把候选判断投影为正式事实。
 
-模块职责、新接口、新依赖、数据变化和架构变化同步记录在 `Module.md`。当前已新增 Python 应用层 `DrawingGraphToolFacade`：它通过只读 port 包装 `QueryService` 能力，通过 `SemanticRecognitionService` 编排按需语义识别，并通过 `RecognitionRunLogPort` 与 `SemanticEvidenceRepositoryPort` 管理语义证据边界。语义证据层已落地：`TextObservation` 与三类 `Interpretation` 数据契约、确定性缓存键与内存缓存、不可变 payload 存储、基于来源事实的图像输入构造、图谱内语义节点幂等写入（`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`，以及 `HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`）、图谱外 `RecognitionRun` 日志（recognition/interpretation/candidate_review 三类 run）、稳定查询投影和 facade 语义查询。断面专项已落地：`SectionLabelNormalizer` 区分 alphabetic/roman/numeric/alphanumeric/unknown，`SectionAliasRuleStore` 管理图谱外已确认别名规则，`SectionMatchService` 仅在双方存在可比较 `TextObservation`、逻辑键一致、候选唯一且无冲突时给出正式匹配，否则只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`。默认 `write_back=false`，语义识别与断面匹配以 dry-run 返回临时结果；只有显式 `write_back=true` 才写入图谱外 run log、图谱内证据或受控语义边。`RecognitionRun` 图谱外，`TextObservation` 图谱内，二者只通过 `recognition_run_id` 关联。候选关系不是正式事实，`matched_candidate` 也不等于正式图谱关系；候选审核仍必须经过 `CandidateReviewService` 和硬规则。当前仍未实现 HTTP API、Agent Skill、MCP Tool adapter、全量自动语义扫描或默认真实云模型调用；真实 Neo4j 语义写入的 live 验证仍以独立 disposable 测试库为准。
+模块职责、新接口、新依赖、数据变化和架构变化同步记录在 `Module.md`，单页端到端 CLI 验收见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。当前已新增 Python 应用层 `DrawingGraphToolFacade`：它通过只读 port 包装 `QueryService` 能力，通过 `SemanticRecognitionService` 编排按需语义识别，并通过 `RecognitionRunLogPort` 与 `SemanticEvidenceRepositoryPort` 管理语义证据边界。语义证据层已落地：`TextObservation` 与三类 `Interpretation` 数据契约、确定性缓存键与内存缓存、不可变 payload 存储、基于来源事实的图像输入构造、图谱内语义节点幂等写入（`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`，以及 `HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`）、图谱外 `RecognitionRun` 日志（recognition/interpretation/candidate_review 三类 run）、稳定查询投影和 facade 语义查询。断面专项已落地：`SectionLabelNormalizer` 区分 alphabetic/roman/numeric/alphanumeric/unknown，`SectionAliasRuleStore` 管理图谱外已确认别名规则，`SectionMatchService` 仅在双方存在可比较 `TextObservation`、逻辑键一致、候选唯一且无冲突时给出正式匹配，否则只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`。默认 `write_back=false`，语义识别与断面匹配以 dry-run 返回临时结果；只有显式 `write_back=true` 才写入图谱外 run log、图谱内证据或受控语义边。`RecognitionRun` 图谱外，`TextObservation` 图谱内，二者只通过 `recognition_run_id` 关联。候选关系不是正式事实，`matched_candidate` 也不等于正式图谱关系；候选审核仍必须经过 `CandidateReviewService` 和硬规则。当前仍未实现 HTTP API、Agent Skill、MCP Tool adapter、全量自动语义扫描或默认真实云模型调用；真实 Neo4j 语义写入的 live 验证仍以独立 disposable 测试库为准。
 
 当前实现状态：基础 Neo4j 导入闭环、离线派生关系增强闭环和候选关系复核骨架已经完成。基础导入负责来源事实层的稳定入库与追溯；离线增强负责 `Table -[:HAS_CAPTION]-> TableCaption`、`DrawingPage -[:USES_BASIC_INFO]-> DrawingBasicInfo`、`DrawingBlock` 起点的 `HAS_CAPTION`、`HAS_ANNOTATION`、`HAS_SECTION_MARK` 正式派生关系，以及 `CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK` 空间候选关系。候选关系 AI 复核是独立显式流程，不挂到基础导入或默认离线增强；查询侧通过 `get_block_trace()` 和 `get_block_relations()` 返回可复核的业务 ID、图片路径、bbox、候选 ID 和增强状态。
 
@@ -179,13 +179,16 @@ JSON 文件
 
 ## 5. 目录和文件职责
 
-### 5.1 根目录文档
+### 5.1 文档目录
 
 | 文件 | 作用 |
 |---|---|
-| `proposal.md` | 描述业务背景、当前问题、功能目标、修改范围和不包含范围，是需求来源。 |
-| `design.md` | 描述技术设计、模块拆分、数据模型、关系模型、接口、安全和异常处理策略，是架构依据。 |
-| `tasks.md` | 将设计拆成可独立验证的实施任务，定义每个任务的修改文件、接口和独立测试命令。 |
+| `docs/planning/proposal.md` | 描述业务背景、当前问题、功能目标、修改范围和不包含范围，是需求来源。 |
+| `docs/planning/design.md` | 描述技术设计、模块拆分、数据模型、关系模型、接口、安全和异常处理策略，是架构依据。 |
+| `docs/planning/tasks.md` | 将设计拆成可独立验证的实施任务，定义每个任务的修改文件、接口和独立测试命令。 |
+| `docs/acceptance/E2E_CLI_ACCEPTANCE.md` | 记录单页真实 Neo4j CLI 链路验收。 |
+| `docs/acceptance/FULL_DATA_ACCEPTANCE.md` | 记录 333 页全量数据导入、离线增强、Neo4j 计数和 live 集成测试验收。 |
+| `docs/acceptance/USER_RUNBOOK.md` | 面向普通使用者的最短运行流程。 |
 | `README.md` | 面向使用者的操作说明，覆盖环境变量、Schema 初始化、基础导入、离线派生关系增强、查询验证、测试和常见错误。 |
 | `architecture.md` | 本文件，描述整体架构、模块划分、数据流和关键设计边界。 |
 | `Module.md` | 面向维护者的模块记录，按新模块职责、新接口、新依赖、数据变化和架构变化同步当前代码实现。 |

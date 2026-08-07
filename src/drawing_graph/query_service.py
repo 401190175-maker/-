@@ -80,9 +80,10 @@ class QueryService:
 def _get_project_sets(transaction: Any, project_id: str, limit: int) -> list[dict[str, object]]:
     cypher = (
         "MATCH (project:Project {id: $project_id})-[:HAS_SET]->(drawing_set:DrawingSet)\n"
+        "OPTIONAL MATCH (drawing_set)-[:HAS_PAGE]->(page:DrawingPage)\n"
         "RETURN drawing_set.id AS id,\n"
         "       drawing_set.name AS name,\n"
-        "       drawing_set.page_count AS page_count\n"
+        "       count(DISTINCT page) AS page_count\n"
         "ORDER BY drawing_set.name ASC, drawing_set.id ASC\n"
         "LIMIT $limit"
     )

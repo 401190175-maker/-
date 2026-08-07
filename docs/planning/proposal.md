@@ -1,6 +1,6 @@
 # 当前规划索引
 
-本根目录规划索引用于保持项目级文档测试和历史规划入口可读；当前正在执行的具体方案以 `changes/tool-facade/proposal.md`、`changes/tool-facade/design.md` 和 `changes/tool-facade/tasks.md` 为准。
+本文档作为项目级规划索引，用于保持文档测试和历史规划入口可读；当前正在执行的具体方案以 `changes/tool-facade/proposal.md`、`changes/tool-facade/design.md` 和 `changes/tool-facade/tasks.md` 为准。
 
 规划边界：本文件不声称代码已实现全部目标能力。当前已实现的事实以 `architecture.md`、`README.md`、`Module.md` 和 `src/` 为准。
 

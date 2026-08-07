@@ -3,13 +3,17 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLANNING_DOCS = ("proposal.md", "design.md", "tasks.md")
+PLANNING_DOCS = (
+    Path("docs") / "planning" / "proposal.md",
+    Path("docs") / "planning" / "design.md",
+    Path("docs") / "planning" / "tasks.md",
+)
 
 
-def _read_planning_doc(name: str) -> str:
-    path = ROOT / name
+def _read_planning_doc(path: Path) -> str:
+    path = ROOT / path
     if not path.exists():
-        raise AssertionError(f"missing planning document: {name}")
+        raise AssertionError(f"missing planning document: {path.relative_to(ROOT)}")
     return path.read_text(encoding="utf-8")
 
 

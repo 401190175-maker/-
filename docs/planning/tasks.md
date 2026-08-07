@@ -1,6 +1,6 @@
 # 当前任务索引
 
-当前任务实施入口为 `changes/tool-facade/tasks.md`。根目录任务索引只保留项目级边界，避免旧测试误判规划文件缺失。
+当前任务实施入口为 `changes/tool-facade/tasks.md`。本文档只保留项目级边界，避免旧测试误判规划文件缺失。
 
 规划边界：本文件不声称代码已实现所有目标；任务完成状态以 `changes/tool-facade/tasks.md` 的验收记录、当前测试输出和实际源码为准。
 

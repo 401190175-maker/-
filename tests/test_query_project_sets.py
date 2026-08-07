@@ -108,11 +108,13 @@ class QueryProjectSetsTest(unittest.TestCase):
 
         cypher, parameters = driver.sessions[0].transaction.calls[0]
         self.assertIn("MATCH (project:Project {id: $project_id})-[:HAS_SET]->(drawing_set:DrawingSet)", cypher)
+        self.assertIn("OPTIONAL MATCH (drawing_set)-[:HAS_PAGE]->(page:DrawingPage)", cypher)
         self.assertIn("RETURN drawing_set.id AS id", cypher)
         self.assertIn("drawing_set.name AS name", cypher)
-        self.assertIn("drawing_set.page_count AS page_count", cypher)
+        self.assertIn("count(DISTINCT page) AS page_count", cypher)
         self.assertIn("LIMIT $limit", cypher)
         self.assertNotIn("project:road-project", cypher)
+        self.assertNotIn("drawing_set.page_count", cypher)
         self.assertNotIn("id(drawing_set)", cypher)
         self.assertNotIn("elementId", cypher)
         self.assertEqual({"project_id": "project:road-project", "limit": 5}, parameters)

@@ -110,11 +110,12 @@ python scripts\drawing_graph_tool.py list-section-matches --cross-section-id ele
 
 仍未覆盖的边界：
 
-- 未做全量 333 页数据导入验收
 - 未接真实多模态模型供应商
 - 未实现 HTTP API、Agent Skill 或 MCP Tool adapter
 - 未验证正式生产账号、远程 Neo4j、CI 环境或多数据库部署
 - 未清理 `e2e-cli-20260806172326` 验收数据
+
+后续补充：333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收已由 `FULL_DATA_ACCEPTANCE.md` 单独记录；本文件继续作为单页真实 CLI 链路验收记录。
 
 ## 回归验证
 

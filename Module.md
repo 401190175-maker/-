@@ -2,7 +2,7 @@
 
 本文记录当前代码已经落地的模块职责、新接口、新依赖、数据变化和架构变化。它只描述当前 Python 应用层实现和薄 CLI adapter，不把 HTTP API、Agent Skill、MCP Tool adapter 或全量自动语义扫描写成已完成能力。
 
-端到端 CLI 验收证据记录在 `E2E_CLI_ACCEPTANCE.md`；面向使用者的最短运行流程记录在 `USER_RUNBOOK.md`。
+单页端到端 CLI 验收证据记录在 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`；333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收证据记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`；面向使用者的最短运行流程记录在 `docs/acceptance/USER_RUNBOOK.md`。
 
 ## 1. 新模块职责
 
