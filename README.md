@@ -8,6 +8,8 @@
 
 当前还新增了 Python 应用层 `DrawingGraphToolFacade`，以及 `scripts\drawing_graph_tool.py` 这个薄 CLI adapter。CLI adapter 只负责从环境变量读取 Neo4j 连接配置、创建 driver、调用 facade 并输出 JSON；它不保存 Neo4j 密码，不暴露 Cypher，不提供 HTTP API，也不是 Agent Skill 或 MCP Tool adapter。facade 默认 `write_back=false`：查询为只读，语义识别为 dry-run，只返回临时 `recognition_run_id`、observation 和 interpretation；只有显式 `write_back=true` 才写入图谱外 run log 和图谱内语义证据。`RecognitionRun` 图谱外，`TextObservation` 图谱内，候选关系不是正式事实，`matched_candidate` 也不能当作正式图谱关系。
 
+Codex 会话可通过项目级 Skill `.codex\skills\drawing-graph-operator\` 稳定遵守本项目的操作规则：行动前先读取当前项目文档和受影响源码，只经 `DrawingGraphToolFacade`、`create_neo4j_tool_facade()` 或 `scripts\drawing_graph_tool.py` 使用图谱能力，默认 `write_back=false`，并区分来源事实、派生关系、语义证据、候选关系与正式关系。该 Skill 是 facade 外侧的操作层：不封装 `data/` 真实数据，不保存 Neo4j 密码、供应商 API key 或 `.env` 密钥，不自动监听文件（不是文件 watcher），不替代 HTTP API 或 MCP Tool adapter，也不修改 Python 业务源码或运行时图谱能力。
+
 当前语义证据层能力（按需识别，非全量自动扫描）：
 
 - 数据契约：`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`、语义状态、缓存键和 `payload_ref`。
@@ -246,6 +248,12 @@ python -m unittest tests.test_readme -v
 
 ```powershell
 python -m unittest tests.test_relation_readme -v
+```
+
+运行 Skill 静态边界测试：
+
+```powershell
+python -m unittest tests.test_skill_docs -v
 ```
 
 运行全部测试发现命令：

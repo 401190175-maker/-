@@ -1,0 +1,4 @@
+interface:
+  display_name: "图块图谱安全操作 Skill"
+  short_description: "以图块图谱项目安全操作 Skill，约束 facade 边界、write_back=false 默认写回安全与候选关系区分"
+  default_prompt: "使用 $drawing-graph-operator 操作图块图谱项目：只通过 DrawingGraphToolFacade 或薄 CLI 使用图谱能力，默认 write_back=false，并区分候选关系与正式事实。"

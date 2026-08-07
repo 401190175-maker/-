@@ -323,6 +323,14 @@ JSON 文件
 
 查询结果不暴露 Neo4j 内部节点 ID，也不返回依赖 OCR 或 Agent 推理的 `caption_text`、`reason`。
 
+### 5.13 Codex Skill 操作层
+
+| 路径 | 作用 |
+|---|---|
+| `.codex/skills/drawing-graph-operator/` | 项目级 Codex Skill，位于 facade 外侧的操作层：`SKILL.md` 定义核心流程与禁止事项，`agents/openai.yaml` 提供 UI 元数据，`references/` 记录项目边界、facade 工作流、验证规则和输出契约。 |
+
+该 Skill 只指导 Codex 如何使用本项目能力，不包含 `data/` 真实数据、Neo4j 数据或密钥，不直接创建 Neo4j driver、不写 Cypher、不调用 repository 写回方法，也不是 Agent Skill、MCP Tool adapter、HTTP/REST API 或文件 watcher。
+
 ## 6. 测试结构
 
 `tests/` 使用标准库 `unittest`，按模块一一对应：
@@ -379,6 +387,7 @@ JSON 文件
 - 不做 OCR。
 - 不做全量自动语义扫描，不默认调用真实外部多模态模型供应商。
 - 不实现 Agent Skill。
+- 项目级 Codex Skill `.codex/skills/drawing-graph-operator/` 只是 facade 外侧的操作层，不属于 Agent Skill、MCP Tool adapter、HTTP/REST API 或文件 watcher。
 - 不提供 HTTP/REST API。
 - 不生成或推断 `block_type`。
 - 只有在双方存在可比较 `TextObservation`、规范化逻辑键一致、同页候选唯一且无规则冲突时才建立 `CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`；多候选、证据冲突或规则边界不明确时只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`，不跨页面自动匹配。

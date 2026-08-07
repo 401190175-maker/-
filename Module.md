@@ -68,6 +68,14 @@
 
 ## 5. 架构变化
 
-当前依赖方向是：薄 CLI adapter 或后续 Skill -> `DrawingGraphToolFacade` -> read port / semantic service / run log port / semantic repository / section match service / candidate review service -> 受控 repository。facade 不写 Cypher，不创建 Neo4j driver，不调用 CLI 脚本，不直接调用 `block_relation_enrichment.py` 的规则函数。Neo4j 生产装配由 `create_neo4j_tool_facade()` 完成；`scripts\drawing_graph_tool.py` 只在最外层读取环境变量、创建 driver、关闭 driver 并输出 JSON，driver 和 secret 仍由外部运行环境提供。
+当前依赖方向是：薄 CLI adapter 或项目级 Skill（`.codex\skills\drawing-graph-operator\`）-> `DrawingGraphToolFacade` -> read port / semantic service / run log port / semantic repository / section match service / candidate review service -> 受控 repository。facade 不写 Cypher，不创建 Neo4j driver，不调用 CLI 脚本，不直接调用 `block_relation_enrichment.py` 的规则函数。Neo4j 生产装配由 `create_neo4j_tool_facade()` 完成；`scripts\drawing_graph_tool.py` 只在最外层读取环境变量、创建 driver、关闭 driver 并输出 JSON，driver 和 secret 仍由外部运行环境提供。
 
 `write_back=false` 是默认安全边界。dry-run 识别可以返回临时 `recognition_run_id`、observation 和 interpretation，但不保证之后可查询。`write_back=true` 时才写入图谱外 run log、图谱内语义证据或受控语义边；候选关系即使 accepted，也必须通过 `CandidateReviewService.review_candidate_group` 的硬规则后才可能调用 `RelationRepository.promote_candidate_relation`。断面匹配的正式边同样只在逻辑键一致、候选唯一且无冲突时写入。
+
+## 6. Skill 资产职责
+
+`.codex/skills/drawing-graph-operator/` 是项目级 Codex Skill（操作层），位于 `DrawingGraphToolFacade` 外侧，包含 `SKILL.md`、`agents/openai.yaml` 和四个 references：`project-boundaries.md`、`facade-workflows.md`、`verification.md`、`output-contract.md`。
+
+- 职责：指导 Codex 先读当前项目文档和受影响源码、只经 facade 或薄 CLI adapter 使用图谱能力、默认 `write_back=false`、分层输出事实、如实报告验证状态。
+- 它不属于 `src/drawing_graph/` 业务模块，不改变运行时图谱能力，也不是 Agent Skill、MCP Tool adapter、HTTP API 或文件 watcher。
+- 静态边界由 `tests/test_skill_docs.py` 保护，运行 `python -m unittest tests.test_skill_docs -v`。
