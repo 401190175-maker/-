@@ -248,9 +248,54 @@ class GetTableCaptionStatusInput(McpInputModel):
         )
 
 
+class GetDrawingDiagnosticsInput(McpInputModel):
+    """Narrow input for the ``get_drawing_diagnostics`` tool."""
+
+    page_id: str | None = None
+    block_id: str | None = None
+    language: str = MCP_DEFAULT_LANGUAGE
+    include_semantics: StrictBool = True
+    include_candidates: StrictBool = True
+
+    @field_validator("page_id")
+    @classmethod
+    def _validate_page_id(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_scope_id(value, "page_id")
+
+    @field_validator("block_id")
+    @classmethod
+    def _validate_block_id(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_scope_id(value, "block_id")
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: str) -> str:
+        return normalize_language(value)
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "GetDrawingDiagnosticsInput":
+        if (self.page_id is None) == (self.block_id is None):
+            raise ValueError("exactly one of page_id or block_id must be provided")
+        return self
+
+    def to_qa_request(self) -> QARequest:
+        """Convert to a fixed read-only ``diagnostic_status`` request."""
+
+        return QARequest(
+            question_type=QuestionType.DIAGNOSTIC_STATUS,
+            scope=QAScope(page_id=self.page_id, block_id=self.block_id),
+            language=self.language,
+            include_semantics=self.include_semantics,
+            include_candidates=self.include_candidates,
+            include_payload=False,
+            write_back=False,
+        )
+
+
 __all__ = (
     "AskDrawingBlockInput",
     "AskDrawingPageInput",
+    "GetDrawingDiagnosticsInput",
     "GetTableCaptionStatusInput",
     "GetSectionMatchStatusInput",
     "ListDrawingCandidatesInput",
