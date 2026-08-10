@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool, field_validator
+
+from .qa_models import QARequest, QAScope, QuestionType
 
 
 MCP_DEFAULT_LANGUAGE = "zh"
@@ -52,7 +54,38 @@ class McpInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class AskDrawingPageInput(McpInputModel):
+    """Narrow input for the ``ask_drawing_page`` tool (page_summary)."""
+
+    page_id: str
+    language: str = MCP_DEFAULT_LANGUAGE
+    include_semantics: StrictBool = True
+
+    @field_validator("page_id")
+    @classmethod
+    def _validate_page_id(cls, value: str) -> str:
+        return normalize_scope_id(value, "page_id")
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: str) -> str:
+        return normalize_language(value)
+
+    def to_qa_request(self) -> QARequest:
+        """Convert to a fixed read-only ``page_summary`` request."""
+
+        return QARequest(
+            question_type=QuestionType.PAGE_SUMMARY,
+            scope=QAScope(page_id=self.page_id),
+            language=self.language,
+            include_semantics=self.include_semantics,
+            include_payload=False,
+            write_back=False,
+        )
+
+
 __all__ = (
+    "AskDrawingPageInput",
     "MAX_SCOPE_ID_LENGTH",
     "MCP_ALLOWED_LANGUAGES",
     "MCP_DEFAULT_LANGUAGE",
