@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, StrictBool, field_validator, model_validator
 
 from .qa_models import QARequest, QAScope, QuestionType
 
@@ -114,9 +114,50 @@ class AskDrawingBlockInput(McpInputModel):
         )
 
 
+class ListDrawingCandidatesInput(McpInputModel):
+    """Narrow input for the ``list_drawing_candidates`` tool."""
+
+    page_id: str | None = None
+    block_id: str | None = None
+    language: str = MCP_DEFAULT_LANGUAGE
+
+    @field_validator("page_id")
+    @classmethod
+    def _validate_page_id(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_scope_id(value, "page_id")
+
+    @field_validator("block_id")
+    @classmethod
+    def _validate_block_id(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_scope_id(value, "block_id")
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: str) -> str:
+        return normalize_language(value)
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "ListDrawingCandidatesInput":
+        if (self.page_id is None) == (self.block_id is None):
+            raise ValueError("exactly one of page_id or block_id must be provided")
+        return self
+
+    def to_qa_request(self) -> QARequest:
+        """Convert to a fixed read-only ``candidate_relations`` request."""
+
+        return QARequest(
+            question_type=QuestionType.CANDIDATE_RELATIONS,
+            scope=QAScope(page_id=self.page_id, block_id=self.block_id),
+            language=self.language,
+            include_payload=False,
+            write_back=False,
+        )
+
+
 __all__ = (
     "AskDrawingBlockInput",
     "AskDrawingPageInput",
+    "ListDrawingCandidatesInput",
     "MAX_SCOPE_ID_LENGTH",
     "MCP_ALLOWED_LANGUAGES",
     "MCP_DEFAULT_LANGUAGE",
