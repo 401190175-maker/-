@@ -122,6 +122,115 @@ class ToolFacadeConfig:
         )
 
 
+@dataclass(frozen=True)
+class QAHttpConfig:
+    """Immutable HTTP service settings loaded from environment variables.
+
+    只服务 HTTP adapter：默认监听 loopback、默认只读、默认关闭 CORS 和
+    OpenAPI docs。Neo4j 密码与 API token 使用 ``repr=False`` 并在自定义
+    ``__repr__`` 中屏蔽，不进入错误输出或日志。
+    """
+
+    neo4j_uri: str
+    neo4j_user: str
+    neo4j_password: str = field(repr=False)
+    host: str = "127.0.0.1"
+    port: int = 8000
+    allow_remote: bool = False
+    allowed_origins: tuple[str, ...] = ()
+    api_token: str = field(default="", repr=False)
+    max_request_bytes: int = 65536
+    request_timeout_seconds: float = 30.0
+    max_concurrent_requests: int = 8
+    docs_enabled: bool = False
+    log_level: str = "INFO"
+
+    @classmethod
+    def from_env(cls) -> "QAHttpConfig":
+        """Create a validated HTTP configuration from process environment variables."""
+
+        env = os.environ
+        return cls(
+            neo4j_uri=_required_env("NEO4J_URI"),
+            neo4j_user=_required_env("NEO4J_USER"),
+            neo4j_password=_required_env("NEO4J_PASSWORD"),
+            host=_required_text(env.get("DRAWING_GRAPH_QA_HTTP_HOST", "127.0.0.1"), "DRAWING_GRAPH_QA_HTTP_HOST"),
+            port=_read_int(
+                env.get("DRAWING_GRAPH_QA_HTTP_PORT", "8000"),
+                "DRAWING_GRAPH_QA_HTTP_PORT",
+                minimum=1,
+                maximum=65535,
+            ),
+            allow_remote=_read_bool(
+                env.get("DRAWING_GRAPH_QA_HTTP_ALLOW_REMOTE", "false"),
+                "DRAWING_GRAPH_QA_HTTP_ALLOW_REMOTE",
+            ),
+            allowed_origins=_read_origins(env.get("DRAWING_GRAPH_QA_HTTP_ALLOWED_ORIGINS", "")),
+            api_token=env.get("DRAWING_GRAPH_QA_HTTP_API_TOKEN", "").strip(),
+            max_request_bytes=_read_int(
+                env.get("DRAWING_GRAPH_QA_HTTP_MAX_REQUEST_BYTES", "65536"),
+                "DRAWING_GRAPH_QA_HTTP_MAX_REQUEST_BYTES",
+                minimum=1,
+            ),
+            request_timeout_seconds=_read_number(
+                env.get("DRAWING_GRAPH_QA_HTTP_REQUEST_TIMEOUT_SECONDS", "30"),
+                "DRAWING_GRAPH_QA_HTTP_REQUEST_TIMEOUT_SECONDS",
+                exclusive_minimum=0,
+            ),
+            max_concurrent_requests=_read_int(
+                env.get("DRAWING_GRAPH_QA_HTTP_MAX_CONCURRENT_REQUESTS", "8"),
+                "DRAWING_GRAPH_QA_HTTP_MAX_CONCURRENT_REQUESTS",
+                minimum=1,
+            ),
+            docs_enabled=_read_bool(
+                env.get("DRAWING_GRAPH_QA_HTTP_DOCS_ENABLED", "false"),
+                "DRAWING_GRAPH_QA_HTTP_DOCS_ENABLED",
+            ),
+            log_level=_read_log_level(env.get("DRAWING_GRAPH_QA_HTTP_LOG_LEVEL", "INFO")),
+        )
+
+    def __post_init__(self) -> None:
+        if self.port < 1 or self.port > 65535:
+            raise ConfigError("DRAWING_GRAPH_QA_HTTP_PORT must be between 1 and 65535")
+        if self.max_request_bytes < 1:
+            raise ConfigError("DRAWING_GRAPH_QA_HTTP_MAX_REQUEST_BYTES must be a positive integer")
+        if self.request_timeout_seconds <= 0:
+            raise ConfigError("DRAWING_GRAPH_QA_HTTP_REQUEST_TIMEOUT_SECONDS must be positive")
+        if self.max_concurrent_requests < 1:
+            raise ConfigError("DRAWING_GRAPH_QA_HTTP_MAX_CONCURRENT_REQUESTS must be a positive integer")
+        if not _is_loopback(self.host):
+            if not self.allow_remote:
+                raise ConfigError("non-loopback host requires DRAWING_GRAPH_QA_HTTP_ALLOW_REMOTE=true")
+            if not self.api_token:
+                raise ConfigError("non-loopback host requires DRAWING_GRAPH_QA_HTTP_API_TOKEN")
+        if self.docs_enabled and not _is_loopback(self.host):
+            raise ConfigError("DRAWING_GRAPH_QA_HTTP_DOCS_ENABLED=true is only allowed on loopback hosts")
+        for origin in self.allowed_origins:
+            if origin == "*" or not origin.startswith(("http://", "https://")):
+                raise ConfigError("DRAWING_GRAPH_QA_HTTP_ALLOWED_ORIGINS must be explicit http/https origins")
+
+    def __repr__(self) -> str:
+        """Return a debug representation with secrets masked."""
+
+        return (
+            "QAHttpConfig("
+            f"neo4j_uri={self.neo4j_uri!r}, "
+            f"neo4j_user={self.neo4j_user!r}, "
+            "neo4j_password='********', "
+            f"host={self.host!r}, "
+            f"port={self.port!r}, "
+            f"allow_remote={self.allow_remote!r}, "
+            f"allowed_origins={self.allowed_origins!r}, "
+            "api_token='********', "
+            f"max_request_bytes={self.max_request_bytes!r}, "
+            f"request_timeout_seconds={self.request_timeout_seconds!r}, "
+            f"max_concurrent_requests={self.max_concurrent_requests!r}, "
+            f"docs_enabled={self.docs_enabled!r}, "
+            f"log_level={self.log_level!r}"
+            ")"
+        )
+
+
 def _store_type(value: object, field_name: str) -> str:
     store_type = str(value).strip().lower()
     if store_type != "in_memory":
@@ -146,3 +255,61 @@ def _read_batch_size(value: str) -> int:
         raise ConfigError("DRAWING_GRAPH_BATCH_SIZE must be a positive integer")
 
     return batch_size
+
+
+def _required_text(value: str, name: str) -> str:
+    stripped = value.strip()
+    if not stripped:
+        raise ConfigError(f"{name} must not be empty")
+    return stripped
+
+
+def _read_int(value: str, name: str, *, minimum: int, maximum: int | None = None) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise ConfigError(f"{name} must be an integer") from error
+    if parsed < minimum:
+        raise ConfigError(f"{name} must be at least {minimum}")
+    if maximum is not None and parsed > maximum:
+        raise ConfigError(f"{name} must be at most {maximum}")
+    return parsed
+
+
+def _read_number(value: str, name: str, *, exclusive_minimum: float) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as error:
+        raise ConfigError(f"{name} must be a number") from error
+    if parsed <= exclusive_minimum:
+        raise ConfigError(f"{name} must be greater than {exclusive_minimum}")
+    return parsed
+
+
+def _read_bool(value: str, name: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name} must be a boolean")
+
+
+def _read_origins(value: str) -> tuple[str, ...]:
+    if not value.strip():
+        return ()
+    origins = tuple(origin.strip() for origin in value.split(",") if origin.strip())
+    if not origins:
+        raise ConfigError("DRAWING_GRAPH_QA_HTTP_ALLOWED_ORIGINS must not be empty when provided")
+    return origins
+
+
+def _read_log_level(value: str) -> str:
+    level = value.strip().upper()
+    if not level:
+        raise ConfigError("DRAWING_GRAPH_QA_HTTP_LOG_LEVEL must not be empty")
+    return level
+
+
+def _is_loopback(host: str) -> bool:
+    return host.strip().lower() in {"127.0.0.1", "::1", "localhost"}

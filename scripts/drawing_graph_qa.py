@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
 import sys
-from enum import Enum
 from pathlib import Path
-from types import MappingProxyType
 from typing import Any, Callable
 
 
@@ -20,6 +17,12 @@ if str(SRC_ROOT) not in sys.path:
 from drawing_graph.config import ImportConfig
 from drawing_graph.qa_models import QAError, QARequest, QAScope, QuestionType
 from drawing_graph.qa_rendering import render_qa_answer_zh_brief
+from drawing_graph.qa_serialization import (
+    build_error_envelope,
+    build_success_envelope,
+    sanitize_error_message,
+    to_jsonable,
+)
 from drawing_graph.qa_service import DrawingGraphQAService
 from drawing_graph.tool_factory import create_neo4j_tool_facade
 
@@ -72,7 +75,7 @@ def main(
     if args.format == "zh-brief":
         print(render_qa_answer_zh_brief(answer))
     else:
-        _print_json({"status": "ok", "data": _jsonable(answer)})
+        _print_json(build_success_envelope(to_jsonable(answer)))
     return 0
 
 
@@ -169,22 +172,6 @@ def _build_driver(uri: str, auth: tuple[str, str]) -> Any:
     return GraphDatabase.driver(uri, auth=auth)
 
 
-def _jsonable(value: Any) -> Any:
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {field.name: _jsonable(getattr(value, field.name)) for field in dataclasses.fields(value)}
-    if isinstance(value, MappingProxyType):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, dict):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, Enum):
-        return value.value
-    return value
-
-
 def _close_driver(driver: Any) -> None:
     close = getattr(driver, "close", None)
     if close is not None:
@@ -198,23 +185,16 @@ def _print_json(payload: dict[str, Any]) -> None:
 def _print_error(category: str, error: Exception) -> None:
     print(
         json.dumps(
-            {
-                "status": "failed",
-                "category": category,
-                "message": _sanitize_message(str(error)),
-            },
+            build_error_envelope(
+                category,
+                sanitize_error_message(str(error)),
+                retryable=getattr(error, "retryable", False),
+            ),
             ensure_ascii=False,
             sort_keys=True,
         ),
         file=sys.stderr,
     )
-
-
-def _sanitize_message(message: str) -> str:
-    lowered = message.lower()
-    if any(token in lowered for token in ("password", "secret", "token", "cypher", "driver")):
-        return "sensitive or low-level backend detail is unavailable"
-    return message
 
 
 if __name__ == "__main__":

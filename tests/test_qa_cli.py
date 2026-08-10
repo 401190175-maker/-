@@ -7,6 +7,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from drawing_graph.qa_models import (
+    AnswerFact,
     QAAnswer,
     QAAnswerStatus,
     QAError,
@@ -16,6 +17,7 @@ from drawing_graph.qa_models import (
     QuestionType,
 )
 from drawing_graph.qa_service import DrawingGraphQAService
+from drawing_graph.qa_serialization import build_error_envelope, build_success_envelope, to_jsonable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -184,7 +186,9 @@ class QaCliErrorTests(unittest.TestCase):
         self.assertEqual(1, exit_code)
         self.assertEqual("", stdout)
         payload = json.loads(stderr)
-        self.assertEqual("NOT_FOUND", payload["category"])
+        self.assertEqual("failed", payload["status"])
+        self.assertEqual("NOT_FOUND", payload["error"]["category"])
+        self.assertIs(False, payload["error"]["retryable"])
         self.assertNotIn("secret", stderr)
         self.assertNotIn("password", stderr)
 
@@ -247,6 +251,102 @@ class QaCliErrorTests(unittest.TestCase):
         exit_code, stdout, stderr = _run_main(module, ["not-a-command"])
         self.assertEqual(2, exit_code)
         self.assertEqual("", stdout)
+
+
+class QaCliSharedSerializationTests(unittest.TestCase):
+    """QA CLI output must match the shared serialization contract."""
+
+    def test_json_success_output_matches_shared_envelope(self):
+        module = _load_qa_cli()
+        answer = QAAnswer(
+            question_type=QuestionType.PAGE_SUMMARY,
+            scope=QAScope(page_id="page:1"),
+            status=QAAnswerStatus.ANSWERED,
+            summary="页面存在，共 3 个元素",
+            facts=(
+                AnswerFact(
+                    fact_kind="candidate_relation",
+                    label="候选关系",
+                    status="candidate",
+                    relation_type="CANDIDATE_CAPTION_OF",
+                ),
+            ),
+        )
+
+        class FixedService:
+            def __init__(self, facade):
+                self.facade = facade
+
+            def ask(self, request):
+                return answer
+
+        exit_code, stdout, stderr = _run_main(
+            module,
+            ["ask-page", "--page-id", "page:1", "--format", "json"],
+            config_loader=lambda: FakeConfig(),
+            driver_factory=lambda uri, auth: FakeDriver(),
+            facade_factory=lambda driver: FakeFacade(),
+            service_factory=lambda facade: FixedService(facade),
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("", stderr)
+        self.assertEqual(
+            build_success_envelope(to_jsonable(answer)),
+            json.loads(stdout),
+        )
+        self.assertEqual("candidate_relation", json.loads(stdout)["data"]["facts"][0]["fact_kind"])
+
+    def test_safe_business_error_matches_shared_envelope(self):
+        module = _load_qa_cli()
+
+        class FailingService:
+            def __init__(self, facade):
+                self.facade = facade
+
+            def ask(self, request):
+                raise QAError(QAErrorCode.NOT_FOUND, "page not found")
+
+        exit_code, stdout, stderr = _run_main(
+            module,
+            ["ask-page", "--page-id", "page:1"],
+            config_loader=lambda: FakeConfig(),
+            driver_factory=lambda uri, auth: FakeDriver(),
+            facade_factory=lambda driver: FakeFacade(),
+            service_factory=lambda facade: FailingService(facade),
+        )
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual("", stdout)
+        self.assertEqual(
+            build_error_envelope("NOT_FOUND", "page not found", retryable=False),
+            json.loads(stderr),
+        )
+
+    def test_sensitive_error_is_sanitized_by_shared_rule(self):
+        module = _load_qa_cli()
+
+        class FailingService:
+            def __init__(self, facade):
+                self.facade = facade
+
+            def ask(self, request):
+                raise QAError(QAErrorCode.INTERNAL_ERROR, "neo4j password=top-secret failed")
+
+        exit_code, stdout, stderr = _run_main(
+            module,
+            ["ask-page", "--page-id", "page:1"],
+            config_loader=lambda: FakeConfig(),
+            driver_factory=lambda uri, auth: FakeDriver(),
+            facade_factory=lambda driver: FakeFacade(),
+            service_factory=lambda facade: FailingService(facade),
+        )
+
+        self.assertEqual(1, exit_code)
+        payload = json.loads(stderr)
+        self.assertEqual("INTERNAL_ERROR", payload["error"]["category"])
+        self.assertNotIn("top-secret", stderr)
+        self.assertNotIn("password", stderr)
 
 
 def _load_qa_cli():
