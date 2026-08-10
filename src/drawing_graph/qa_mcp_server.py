@@ -18,6 +18,7 @@ from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pydantic import ValidationError
 
 from .qa_mcp_models import (
+    AskDrawingPageInput,
     McpInputModel,
     McpQAError,
     McpQAFailure,
@@ -55,7 +56,19 @@ class _ToolSpec:
     handler_method: str
 
 
-_TOOL_SPECS: tuple[_ToolSpec, ...] = ()
+_TOOL_SPECS: tuple[_ToolSpec, ...] = (
+    _ToolSpec(
+        name="ask_drawing_page",
+        description=(
+            "查询指定图纸页的摘要与可用语义证据（只读）。scope 仅接受 page_id；"
+            "include_semantics 只读取已有证据，不触发识别或持久化。"
+        ),
+        input_model=AskDrawingPageInput,
+        handler_method="ask_drawing_page",
+    ),
+)
+
+_SPEC_BY_NAME = {spec.name: spec for spec in _TOOL_SPECS}
 
 
 def create_mcp_server(tools: DrawingGraphMCPTools) -> Server:
@@ -91,9 +104,6 @@ def create_mcp_server(tools: DrawingGraphMCPTools) -> Server:
         return _to_call_result(outcome)
 
     return server
-
-
-_SPEC_BY_NAME = {spec.name: spec for spec in _TOOL_SPECS}
 
 
 def _build_tool_definition(spec: _ToolSpec, annotations: ToolAnnotations) -> Tool:

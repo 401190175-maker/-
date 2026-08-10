@@ -120,11 +120,177 @@ class QAMcpServerFactoryTests(unittest.TestCase):
         self.assertIsInstance(server, Server)
 
 
+class AskDrawingPageContractTests(unittest.TestCase):
+    """ask_drawing_page must be discoverable and delegate to its handler."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_tool_is_discoverable_with_stable_schema_and_annotations(self):
+        import json
+
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        tool = next(item for item in listed.tools if item.name == "ask_drawing_page")
+
+        self.assertIn("图纸页", tool.description)
+        self.assertIn("摘要", tool.description)
+        schema = tool.inputSchema
+        self.assertEqual({"page_id", "language", "include_semantics"}, set(schema["properties"]))
+        self.assertEqual(["page_id"], schema["required"])
+        self.assertEqual("zh", schema["properties"]["language"]["default"])
+        self.assertTrue(schema["properties"]["include_semantics"]["default"])
+        self.assertEqual("boolean", schema["properties"]["include_semantics"]["type"])
+
+        output = tool.outputSchema
+        json.dumps(output)
+        self.assertEqual("McpQAToolResult", output.get("title"))
+        self.assertIn("oneOf", output)
+        self.assertIn("drawing-qa-mcp-v1", json.dumps(output))
+
+        self.assertTrue(tool.annotations.readOnlyHint)
+        self.assertFalse(tool.annotations.destructiveHint)
+        self.assertFalse(tool.annotations.openWorldHint)
+
+    def test_call_delegates_once_and_returns_structured_and_text_content(self):
+        from drawing_graph.qa_models import QuestionType
+
+        service = _FakeQAService()
+        server = self._server(service)
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool(
+                    "ask_drawing_page",
+                    {"page_id": " page:1 ", "include_semantics": False},
+                )
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        self.assertEqual("ok", result.structuredContent["status"])
+        self.assertEqual(
+            "drawing-qa-mcp-v1",
+            result.structuredContent["meta"]["contract_version"],
+        )
+        self.assertEqual(
+            "ask_drawing_page",
+            result.structuredContent["meta"]["tool_name"],
+        )
+        self.assertEqual("answered", result.structuredContent["data"]["status"])
+        text = result.content[0].text
+        self.assertIn("answered", text)
+        self.assertIn("页面摘要可用", text)
+
+        self.assertEqual(1, len(service.requests))
+        request = service.requests[0]
+        self.assertEqual(QuestionType.PAGE_SUMMARY, request.question_type)
+        self.assertEqual("page:1", request.scope.page_id)
+        self.assertFalse(request.include_semantics)
+        self.assertFalse(request.write_back)
+        self.assertFalse(request.include_payload)
+        self.assertEqual("zh", request.language)
+
+    def test_invalid_language_is_safe_tool_error_not_protocol_error(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool(
+                    "ask_drawing_page",
+                    {"page_id": "page:1", "language": "fr"},
+                )
+                return result
+
+        result = _run(check())
+
+        self.assertTrue(result.isError)
+        self.assertEqual("error", result.structuredContent["status"])
+        self.assertEqual("invalid_argument", result.structuredContent["error"]["category"])
+        self.assertFalse(result.structuredContent["error"]["retryable"])
+
+    def test_not_found_answer_is_tool_error(self):
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus, QAScope, QuestionType
+
+        answer = QAAnswer(
+            question_type=QuestionType.PAGE_SUMMARY,
+            scope=QAScope(page_id="page:missing"),
+            status=QAAnswerStatus.NOT_FOUND,
+            summary="页面不存在或来源事实不可用",
+        )
+        server = self._server(_FakeQAService(result=answer))
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("ask_drawing_page", {"page_id": "page:missing"})
+                return result
+
+        result = _run(check())
+
+        self.assertTrue(result.isError)
+        self.assertEqual("not_found", result.structuredContent["error"]["category"])
+
+    def test_partial_answer_is_not_a_tool_error(self):
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus, QAScope, QuestionType
+
+        answer = QAAnswer(
+            question_type=QuestionType.PAGE_SUMMARY,
+            scope=QAScope(page_id="page:1"),
+            status=QAAnswerStatus.PARTIAL,
+            summary="部分回答",
+            unsupported_parts=("语义证据不可用",),
+        )
+        server = self._server(_FakeQAService(result=answer))
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("ask_drawing_page", {"page_id": "page:1"})
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        self.assertEqual("partial", result.structuredContent["data"]["status"])
+        self.assertEqual(["语义证据不可用"], result.structuredContent["data"]["unsupported_parts"])
+        self.assertIn("部分回答", result.content[0].text)
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 
     def __getattr__(self, name):
         raise AssertionError(f"server factory must not call tools.{name} during creation")
+
+
+class _FakeQAService:
+    """Minimal QA service double recording ask() calls for server tests."""
+
+    def __init__(self, result=None):
+        self.result = result
+        self.requests = []
+
+    def ask(self, request):
+        self.requests.append(request)
+        if self.result is not None:
+            return self.result
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus
+
+        return QAAnswer(
+            question_type=request.question_type,
+            scope=request.scope,
+            status=QAAnswerStatus.ANSWERED,
+            summary="页面摘要可用",
+        )
 
 
 if __name__ == "__main__":
