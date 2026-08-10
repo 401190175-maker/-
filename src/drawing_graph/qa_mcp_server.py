@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from .qa_mcp_models import (
     AskDrawingBlockInput,
     AskDrawingPageInput,
+    GetTableCaptionStatusInput,
     GetSectionMatchStatusInput,
     ListDrawingCandidatesInput,
     McpInputModel,
@@ -96,6 +97,16 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         input_model=GetSectionMatchStatusInput,
         handler_method="get_section_match_status",
+    ),
+    _ToolSpec(
+        name="get_table_caption_status",
+        description=(
+            "查询表格与表题状态（只读）。底层能力不足时允许返回 partial 与 "
+            "unsupported parts，不补造结论。table_id、table_caption_id 与 "
+            "page_id 必须且只能提供一个。"
+        ),
+        input_model=GetTableCaptionStatusInput,
+        handler_method="get_table_caption_status",
     ),
 )
 

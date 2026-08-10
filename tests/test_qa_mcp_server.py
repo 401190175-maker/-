@@ -610,6 +610,115 @@ class GetSectionMatchStatusContractTests(unittest.TestCase):
                     self.assertEqual("not_found", result.structuredContent["error"]["category"])
 
 
+class GetTableCaptionStatusContractTests(unittest.TestCase):
+    """get_table_caption_status must support three scopes and keep partial."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_schema_allows_three_scopes_only_and_mentions_partial(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        tool = next(item for item in listed.tools if item.name == "get_table_caption_status")
+
+        self.assertIn("partial", tool.description)
+        self.assertIn("unsupported", tool.description)
+        schema = tool.inputSchema
+        self.assertEqual(
+            {"table_id", "table_caption_id", "page_id", "language"},
+            set(schema["properties"]),
+        )
+        self.assertNotIn("required", schema)
+        for forbidden in ("block_id", "write_back", "reverse", "relate", "persist"):
+            self.assertNotIn(forbidden, schema)
+        self.assertTrue(tool.annotations.readOnlyHint)
+
+    def test_each_scope_maps_to_table_caption_status_and_calls_once(self):
+        from drawing_graph.qa_models import QuestionType
+
+        for scope_field, scope_value in (
+            ("table_id", "table:1"),
+            ("table_caption_id", "caption:1"),
+            ("page_id", "page:1"),
+        ):
+            with self.subTest(scope=scope_field):
+                service = _FakeQAService()
+                server = self._server(service)
+
+                async def check():
+                    async with _client_session(server) as client:
+                        result = await client.call_tool(
+                            "get_table_caption_status",
+                            {scope_field: scope_value},
+                        )
+                        return result
+
+                result = _run(check())
+                self.assertFalse(result.isError)
+                self.assertEqual(1, len(service.requests))
+                request = service.requests[0]
+                self.assertEqual(QuestionType.TABLE_CAPTION_STATUS, request.question_type)
+                self.assertEqual(scope_value, getattr(request.scope, scope_field))
+                self.assertFalse(request.write_back)
+                self.assertFalse(request.include_payload)
+
+    def test_missing_or_multiple_scope_is_invalid_argument(self):
+        server = self._server(_FakeQAService())
+
+        async def check(arguments):
+            async with _client_session(server) as client:
+                result = await client.call_tool("get_table_caption_status", arguments)
+                return result
+
+        for arguments in ({}, {"table_id": "table:1", "page_id": "page:1"}):
+            with self.subTest(arguments=arguments):
+                result = _run(check(arguments))
+                self.assertTrue(result.isError)
+                self.assertEqual(
+                    "invalid_argument",
+                    result.structuredContent["error"]["category"],
+                )
+
+    def test_partial_keeps_unsupported_parts_without_error(self):
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus, QAScope, QuestionType
+
+        answer = QAAnswer(
+            question_type=QuestionType.TABLE_CAPTION_STATUS,
+            scope=QAScope(table_id="table:1"),
+            status=QAAnswerStatus.PARTIAL,
+            summary="仅返回来源元素",
+            unsupported_parts=("表格标题派生状态未查询",),
+        )
+        server = self._server(_FakeQAService(result=answer))
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool(
+                    "get_table_caption_status",
+                    {"table_id": "table:1"},
+                )
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        self.assertEqual("partial", result.structuredContent["data"]["status"])
+        self.assertEqual(
+            ["表格标题派生状态未查询"],
+            result.structuredContent["data"]["unsupported_parts"],
+        )
+        self.assertIn("部分回答", result.content[0].text)
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 
