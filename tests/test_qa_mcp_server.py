@@ -978,6 +978,158 @@ class QAMcpToolDiscoveryTests(unittest.TestCase):
         jsonschema.validate(failure, output_schema)
 
 
+class QAMcpErrorBoundaryTests(unittest.TestCase):
+    """Protocol-level errors and tool-level errors must stay separated."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_unknown_tool_stays_in_sdk_error_handling(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("not_a_real_tool", {})
+                return result
+
+        result = _run(check())
+
+        self.assertTrue(result.isError)
+        self.assertIsNone(result.structuredContent)
+        self.assertIn("not_a_real_tool", result.content[0].text)
+
+    def test_unsupported_method_raises_sdk_protocol_error(self):
+        from mcp.shared.exceptions import McpError
+        from mcp.types import Request, RequestParams, Result
+
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                await client.initialize()
+                try:
+                    await client.send_request(
+                        Request(method="unknown/method", params=RequestParams()),
+                        Result,
+                    )
+                except Exception as error:
+                    return error
+            raise AssertionError("unsupported method must raise a protocol error")
+
+        error = _run(check())
+        self.assertIsInstance(error, McpError)
+
+    def test_input_validation_error_is_structured_tool_error(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("list_drawing_candidates", {})
+                return result
+
+        result = _run(check())
+
+        self.assertTrue(result.isError)
+        self.assertEqual("error", result.structuredContent["status"])
+        self.assertEqual("invalid_argument", result.structuredContent["error"]["category"])
+        self.assertFalse(result.structuredContent["error"]["retryable"])
+        self.assertIn("drawing-qa-mcp-v1", result.structuredContent["meta"]["contract_version"])
+
+    def test_not_found_and_unsupported_are_structured_tool_errors(self):
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus, QAScope, QuestionType
+
+        not_found = QAAnswer(
+            question_type=QuestionType.PAGE_SUMMARY,
+            scope=QAScope(page_id="page:missing"),
+            status=QAAnswerStatus.NOT_FOUND,
+            summary="页面不存在",
+        )
+        unsupported = QAAnswer(
+            question_type=QuestionType.UNKNOWN_OR_UNSUPPORTED,
+            scope=QAScope(),
+            status=QAAnswerStatus.UNSUPPORTED,
+            summary="该问题类型当前不受支持",
+        )
+
+        for answer, expected_category in (
+            (not_found, "not_found"),
+            (unsupported, "unsupported_question"),
+        ):
+            with self.subTest(expected_category=expected_category):
+                server = self._server(_FakeQAService(result=answer))
+
+                async def check():
+                    async with _client_session(server) as client:
+                        result = await client.call_tool(
+                            "ask_drawing_page",
+                            {"page_id": "page:1"},
+                        )
+                        return result
+
+                result = _run(check())
+                self.assertTrue(result.isError)
+                self.assertEqual(
+                    expected_category,
+                    result.structuredContent["error"]["category"],
+                )
+
+    def test_unexpected_exception_becomes_sanitized_internal_error(self):
+        service = _FakeQAService(
+            error=RuntimeError("bolt://user:secret@host:7687 traceback detail")
+        )
+        server = self._server(service)
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("ask_drawing_page", {"page_id": "page:1"})
+                return result
+
+        with self.assertLogs("drawing_graph.qa_mcp_tools", level="ERROR") as logs:
+            result = _run(check())
+
+        self.assertTrue(result.isError)
+        error = result.structuredContent["error"]
+        self.assertEqual("internal_error", error["category"])
+        self.assertNotIn("secret", error["message"])
+        self.assertNotIn("bolt://", error["message"])
+        self.assertNotIn("traceback", error["message"])
+        call_id = result.structuredContent["meta"]["call_id"]
+        self.assertTrue(call_id)
+        self.assertIn(call_id, "".join(logs.output))
+
+    def test_partial_keeps_warnings_and_unsupported_parts_without_error(self):
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus, QAScope, QuestionType
+
+        answer = QAAnswer(
+            question_type=QuestionType.TABLE_CAPTION_STATUS,
+            scope=QAScope(table_id="table:1"),
+            status=QAAnswerStatus.PARTIAL,
+            summary="仅返回来源元素",
+            warnings=("未增强",),
+            unsupported_parts=("派生表题关系未确认",),
+        )
+        server = self._server(_FakeQAService(result=answer))
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool(
+                    "get_table_caption_status",
+                    {"table_id": "table:1"},
+                )
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        data = result.structuredContent["data"]
+        self.assertEqual("partial", data["status"])
+        self.assertEqual(["未增强"], data["warnings"])
+        self.assertEqual(["派生表题关系未确认"], data["unsupported_parts"])
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 
@@ -988,12 +1140,15 @@ class _StubTools:
 class _FakeQAService:
     """Minimal QA service double recording ask() calls for server tests."""
 
-    def __init__(self, result=None):
+    def __init__(self, result=None, error=None):
         self.result = result
+        self.error = error
         self.requests = []
 
     def ask(self, request):
         self.requests.append(request)
+        if self.error is not None:
+            raise self.error
         if self.result is not None:
             return self.result
         from drawing_graph.qa_models import QAAnswer, QAAnswerStatus
