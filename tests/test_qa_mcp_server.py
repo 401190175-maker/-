@@ -844,6 +844,140 @@ class GetDrawingDiagnosticsContractTests(unittest.TestCase):
         self.assertEqual(["语义证据未查询"], data["unsupported_parts"])
 
 
+class QAMcpToolDiscoveryTests(unittest.TestCase):
+    """The initialized server must expose exactly the six read-only tools."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_discovery_returns_exactly_the_six_design_tools(self):
+        from drawing_graph.qa_mcp_models import MCP_TOOL_NAMES
+
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                await client.initialize()
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+
+        self.assertEqual(tuple(MCP_TOOL_NAMES), tuple(tool.name for tool in listed.tools))
+
+    def test_no_generic_write_import_or_cypher_tool_is_exposed(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        names = {tool.name for tool in listed.tools}
+        for forbidden in (
+            "ask_drawing_graph",
+            "write_back",
+            "import_drawing",
+            "enrich_relations",
+            "review_candidate",
+            "promote_candidate",
+            "run_cypher",
+        ):
+            self.assertNotIn(forbidden, names)
+
+    def test_every_tool_has_stable_schema_and_read_only_annotations(self):
+        import json
+
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+
+        for tool in listed.tools:
+            with self.subTest(tool=tool.name):
+                self.assertEqual("object", tool.inputSchema.get("type"))
+                self.assertIsInstance(tool.inputSchema.get("properties"), dict)
+                json.dumps(tool.inputSchema)
+
+                self.assertIsNotNone(tool.outputSchema)
+                self.assertEqual("McpQAToolResult", tool.outputSchema.get("title"))
+                self.assertIn("oneOf", tool.outputSchema)
+                json.dumps(tool.outputSchema)
+
+                self.assertTrue(tool.annotations.readOnlyHint)
+                self.assertFalse(tool.annotations.destructiveHint)
+                self.assertFalse(tool.annotations.openWorldHint)
+
+    def test_input_schemas_never_expose_forbidden_fields(self):
+        import json
+
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+
+        for tool in listed.tools:
+            with self.subTest(tool=tool.name):
+                schema_text = json.dumps(tool.inputSchema).lower()
+                for forbidden in (
+                    "write_back",
+                    "include_payload",
+                    "cypher",
+                    "credential",
+                    "password",
+                    "token",
+                    "driver",
+                    "session",
+                    "transaction",
+                    "repository",
+                    "path",
+                ):
+                    self.assertNotIn(forbidden, schema_text)
+
+    def test_output_schema_accepts_success_and_error_root_objects(self):
+        import jsonschema
+
+        from drawing_graph.qa_mcp_models import McpQAFailure, McpQASuccess, McpResultMeta
+
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        output_schema = listed.tools[0].outputSchema
+        meta = McpResultMeta(tool_name="ask_drawing_page", call_id="call-1").model_dump()
+        success = McpQASuccess(
+            data={"status": "answered", "summary": "ok"},
+            meta=meta,
+        ).model_dump(mode="json", by_alias=True)
+        failure = McpQAFailure(
+            error={
+                "category": "not_found",
+                "message": "未找到",
+                "retryable": False,
+            },
+            meta=meta,
+        ).model_dump(mode="json", by_alias=True)
+
+        jsonschema.validate(success, output_schema)
+        jsonschema.validate(failure, output_schema)
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 
