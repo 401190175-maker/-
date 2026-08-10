@@ -360,5 +360,106 @@ class ListDrawingCandidatesInputTests(unittest.TestCase):
         self.assertEqual({"page_id": "page:1"}, scope_ids)
 
 
+class GetSectionMatchStatusInputTests(unittest.TestCase):
+    """GetSectionMatchStatusInput must require exactly one section or page scope."""
+
+    def test_cross_section_scope_produces_read_only_section_request(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+        from drawing_graph.qa_models import QuestionType
+
+        tool_input = GetSectionMatchStatusInput(cross_section_id="element:road:24:cs1")
+        request = tool_input.to_qa_request()
+
+        self.assertEqual(QuestionType.SECTION_MATCHES, request.question_type)
+        self.assertEqual("element:road:24:cs1", request.scope.cross_section_id)
+        self.assertIsNone(request.scope.page_id)
+        self.assertFalse(request.write_back)
+        self.assertFalse(request.include_payload)
+        self.assertEqual("zh", request.language)
+
+    def test_page_scope_produces_read_only_section_request(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+
+        tool_input = GetSectionMatchStatusInput(page_id="page:road:24", language="en")
+        request = tool_input.to_qa_request()
+
+        self.assertEqual("page:road:24", request.scope.page_id)
+        self.assertIsNone(request.scope.cross_section_id)
+        self.assertEqual("en", request.language)
+
+    def test_exactly_one_scope_is_required(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            GetSectionMatchStatusInput()
+        with self.assertRaises(ValidationError):
+            GetSectionMatchStatusInput(
+                cross_section_id="element:1",
+                page_id="page:1",
+            )
+
+    def test_blank_or_too_long_ids_are_rejected(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+        from pydantic import ValidationError
+
+        for cross_section_id in ("", "   ", "x" * 513):
+            with self.assertRaises(ValidationError):
+                GetSectionMatchStatusInput(cross_section_id=cross_section_id)
+        for page_id in ("", "   ", "x" * 513):
+            with self.assertRaises(ValidationError):
+                GetSectionMatchStatusInput(page_id=page_id)
+
+    def test_invalid_language_is_rejected(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError) as context:
+            GetSectionMatchStatusInput(cross_section_id="element:1", language="fr")
+        self.assertIn("language", str(context.exception))
+
+    def test_rule_version_status_and_write_back_fields_are_rejected(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+        from pydantic import ValidationError
+
+        for extra in (
+            {"rule_version": "section-match-v1"},
+            {"status": "candidate"},
+            {"write_back": True},
+            {"include_payload": True},
+        ):
+            with self.assertRaises(ValidationError):
+                GetSectionMatchStatusInput(cross_section_id="element:1", **extra)
+
+    def test_extra_field_error_does_not_echo_unrelated_input(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+        from pydantic import ValidationError
+
+        sentinel = "section-id-not-to-be-echoed"
+        with self.assertRaises(ValidationError) as context:
+            GetSectionMatchStatusInput(cross_section_id=sentinel, write_back=True)
+        self.assertNotIn(sentinel, str(context.exception))
+
+    def test_scope_carries_only_the_selected_id(self):
+        from drawing_graph.qa_mcp_models import GetSectionMatchStatusInput
+
+        request = GetSectionMatchStatusInput(page_id="page:1").to_qa_request()
+        scope_ids = {
+            name: value
+            for name, value in (
+                ("project_id", request.scope.project_id),
+                ("drawing_set_id", request.scope.drawing_set_id),
+                ("page_id", request.scope.page_id),
+                ("block_id", request.scope.block_id),
+                ("cross_section_id", request.scope.cross_section_id),
+                ("table_id", request.scope.table_id),
+                ("table_caption_id", request.scope.table_caption_id),
+                ("element_id", request.scope.element_id),
+            )
+            if value is not None
+        }
+        self.assertEqual({"page_id": "page:1"}, scope_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -154,9 +154,50 @@ class ListDrawingCandidatesInput(McpInputModel):
         )
 
 
+class GetSectionMatchStatusInput(McpInputModel):
+    """Narrow input for the ``get_section_match_status`` tool."""
+
+    cross_section_id: str | None = None
+    page_id: str | None = None
+    language: str = MCP_DEFAULT_LANGUAGE
+
+    @field_validator("cross_section_id")
+    @classmethod
+    def _validate_cross_section_id(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_scope_id(value, "cross_section_id")
+
+    @field_validator("page_id")
+    @classmethod
+    def _validate_page_id(cls, value: str | None) -> str | None:
+        return None if value is None else normalize_scope_id(value, "page_id")
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: str) -> str:
+        return normalize_language(value)
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "GetSectionMatchStatusInput":
+        if (self.cross_section_id is None) == (self.page_id is None):
+            raise ValueError("exactly one of cross_section_id or page_id must be provided")
+        return self
+
+    def to_qa_request(self) -> QARequest:
+        """Convert to a fixed read-only ``section_matches`` request."""
+
+        return QARequest(
+            question_type=QuestionType.SECTION_MATCHES,
+            scope=QAScope(cross_section_id=self.cross_section_id, page_id=self.page_id),
+            language=self.language,
+            include_payload=False,
+            write_back=False,
+        )
+
+
 __all__ = (
     "AskDrawingBlockInput",
     "AskDrawingPageInput",
+    "GetSectionMatchStatusInput",
     "ListDrawingCandidatesInput",
     "MAX_SCOPE_ID_LENGTH",
     "MCP_ALLOWED_LANGUAGES",
