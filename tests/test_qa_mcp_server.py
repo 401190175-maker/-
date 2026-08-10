@@ -368,6 +368,135 @@ class AskDrawingBlockContractTests(unittest.TestCase):
         self.assertEqual("block:1", service.requests[0].scope.block_id)
 
 
+class ListDrawingCandidatesContractTests(unittest.TestCase):
+    """list_drawing_candidates must enforce one page/block scope, read-only."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_schema_requires_one_scope_and_mentions_candidate_boundary(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        tool = next(item for item in listed.tools if item.name == "list_drawing_candidates")
+
+        self.assertIn("候选", tool.description)
+        self.assertIn("不是正式", tool.description)
+        schema = tool.inputSchema
+        self.assertEqual({"page_id", "block_id", "language"}, set(schema["properties"]))
+        self.assertNotIn("required", schema)
+        for forbidden in ("write_back", "status", "relation_type", "review", "promote"):
+            self.assertNotIn(forbidden, schema)
+        self.assertTrue(tool.annotations.readOnlyHint)
+
+    def test_page_scope_and_block_scope_each_call_service_once(self):
+        from drawing_graph.qa_models import QuestionType
+
+        for scope_field, scope_value in (("page_id", "page:1"), ("block_id", "block:1")):
+            with self.subTest(scope=scope_field):
+                service = _FakeQAService()
+                server = self._server(service)
+
+                async def check():
+                    async with _client_session(server) as client:
+                        result = await client.call_tool(
+                            "list_drawing_candidates",
+                            {scope_field: scope_value},
+                        )
+                        return result
+
+                result = _run(check())
+                self.assertFalse(result.isError)
+                self.assertEqual(1, len(service.requests))
+                request = service.requests[0]
+                self.assertEqual(QuestionType.CANDIDATE_RELATIONS, request.question_type)
+                self.assertEqual(scope_value, getattr(request.scope, scope_field))
+                self.assertFalse(request.write_back)
+                self.assertFalse(request.include_payload)
+
+    def test_missing_or_conflicting_scope_is_invalid_argument(self):
+        server = self._server(_FakeQAService())
+
+        async def check(arguments):
+            async with _client_session(server) as client:
+                result = await client.call_tool("list_drawing_candidates", arguments)
+                return result
+
+        for arguments in ({}, {"page_id": "page:1", "block_id": "block:1"}):
+            with self.subTest(arguments=arguments):
+                result = _run(check(arguments))
+                self.assertTrue(result.isError)
+                self.assertEqual("error", result.structuredContent["status"])
+                self.assertEqual(
+                    "invalid_argument",
+                    result.structuredContent["error"]["category"],
+                )
+
+    def test_no_generic_question_or_write_tool_is_exposed(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        names = {tool.name for tool in listed.tools}
+        self.assertNotIn("ask_drawing_graph", names)
+        self.assertNotIn("review_candidate", names)
+        self.assertNotIn("promote_candidate", names)
+
+    def test_candidate_facts_stay_candidate_in_structured_content(self):
+        from drawing_graph.qa_models import (
+            AnswerFact,
+            QAAnswer,
+            QAAnswerStatus,
+            QAScope,
+            QuestionType,
+        )
+
+        answer = QAAnswer(
+            question_type=QuestionType.CANDIDATE_RELATIONS,
+            scope=QAScope(page_id="page:1"),
+            status=QAAnswerStatus.ANSWERED,
+            summary="候选关系列表",
+            facts=(
+                AnswerFact(
+                    fact_kind="candidate_relation",
+                    label="候选断面标记",
+                    status="candidate",
+                    ids={"candidate_group_id": "group:1", "page_id": "page:1"},
+                    relation_type="CANDIDATE_HAS_SECTION_MARK",
+                ),
+            ),
+        )
+        server = self._server(_FakeQAService(result=answer))
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("list_drawing_candidates", {"page_id": "page:1"})
+                return result
+
+        result = _run(check())
+
+        self.assertEqual(
+            "candidate_relation",
+            result.structuredContent["data"]["facts"][0]["fact_kind"],
+        )
+        self.assertEqual(
+            "CANDIDATE_HAS_SECTION_MARK",
+            result.structuredContent["data"]["facts"][0]["relation_type"],
+        )
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 

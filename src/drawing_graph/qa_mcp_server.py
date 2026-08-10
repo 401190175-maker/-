@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from .qa_mcp_models import (
     AskDrawingBlockInput,
     AskDrawingPageInput,
+    ListDrawingCandidatesInput,
     McpInputModel,
     McpQAError,
     McpQAFailure,
@@ -75,6 +76,15 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         input_model=AskDrawingBlockInput,
         handler_method="ask_drawing_block",
+    ),
+    _ToolSpec(
+        name="list_drawing_candidates",
+        description=(
+            "列出页面或图块范围内的候选关系（只读）。候选关系不是正式关系；"
+            "不提供审核、提升或写回。page_id 与 block_id 必须且只能提供一个。"
+        ),
+        input_model=ListDrawingCandidatesInput,
+        handler_method="list_drawing_candidates",
     ),
 )
 
