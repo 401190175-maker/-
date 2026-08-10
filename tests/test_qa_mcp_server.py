@@ -497,6 +497,119 @@ class ListDrawingCandidatesContractTests(unittest.TestCase):
         )
 
 
+class GetSectionMatchStatusContractTests(unittest.TestCase):
+    """get_section_match_status must enforce one cross-section/page scope."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_schema_scope_and_candidate_boundary_description(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        tool = next(item for item in listed.tools if item.name == "get_section_match_status")
+
+        self.assertIn("matched_candidate", tool.description)
+        self.assertIn("不是正式", tool.description)
+        schema = tool.inputSchema
+        self.assertEqual(
+            {"cross_section_id", "page_id", "language"},
+            set(schema["properties"]),
+        )
+        self.assertNotIn("required", schema)
+        for forbidden in ("write_back", "rule_version", "status", "persist"):
+            self.assertNotIn(forbidden, schema)
+        self.assertTrue(tool.annotations.readOnlyHint)
+
+    def test_both_scopes_map_to_section_matches_and_call_once(self):
+        from drawing_graph.qa_models import QuestionType
+
+        for scope_field, scope_value in (
+            ("cross_section_id", "element:1"),
+            ("page_id", "page:1"),
+        ):
+            with self.subTest(scope=scope_field):
+                service = _FakeQAService()
+                server = self._server(service)
+
+                async def check():
+                    async with _client_session(server) as client:
+                        result = await client.call_tool(
+                            "get_section_match_status",
+                            {scope_field: scope_value},
+                        )
+                        return result
+
+                result = _run(check())
+                self.assertFalse(result.isError)
+                self.assertEqual(1, len(service.requests))
+                request = service.requests[0]
+                self.assertEqual(QuestionType.SECTION_MATCHES, request.question_type)
+                self.assertEqual(scope_value, getattr(request.scope, scope_field))
+                self.assertFalse(request.write_back)
+
+    def test_missing_scope_is_invalid_argument(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("get_section_match_status", {})
+                return result
+
+        result = _run(check())
+
+        self.assertTrue(result.isError)
+        self.assertEqual("invalid_argument", result.structuredContent["error"]["category"])
+
+    def test_partial_is_success_and_not_found_is_error(self):
+        from drawing_graph.qa_models import QAAnswer, QAAnswerStatus, QAScope, QuestionType
+
+        partial = QAAnswer(
+            question_type=QuestionType.SECTION_MATCHES,
+            scope=QAScope(page_id="page:1"),
+            status=QAAnswerStatus.PARTIAL,
+            summary="部分匹配状态",
+            unsupported_parts=("断面匹配证据不足",),
+        )
+        not_found = QAAnswer(
+            question_type=QuestionType.SECTION_MATCHES,
+            scope=QAScope(page_id="page:missing"),
+            status=QAAnswerStatus.NOT_FOUND,
+            summary="未找到",
+        )
+
+        for answer, expected_error in ((partial, False), (not_found, True)):
+            with self.subTest(expected_error=expected_error):
+                server = self._server(_FakeQAService(result=answer))
+
+                async def check():
+                    async with _client_session(server) as client:
+                        result = await client.call_tool(
+                            "get_section_match_status",
+                            {"page_id": "page:1"},
+                        )
+                        return result
+
+                result = _run(check())
+                self.assertEqual(expected_error, result.isError)
+                if not expected_error:
+                    self.assertEqual("partial", result.structuredContent["data"]["status"])
+                    self.assertEqual(
+                        ["断面匹配证据不足"],
+                        result.structuredContent["data"]["unsupported_parts"],
+                    )
+                else:
+                    self.assertEqual("not_found", result.structuredContent["error"]["category"])
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 

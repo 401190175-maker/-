@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from .qa_mcp_models import (
     AskDrawingBlockInput,
     AskDrawingPageInput,
+    GetSectionMatchStatusInput,
     ListDrawingCandidatesInput,
     McpInputModel,
     McpQAError,
@@ -85,6 +86,16 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         input_model=ListDrawingCandidatesInput,
         handler_method="list_drawing_candidates",
+    ),
+    _ToolSpec(
+        name="get_section_match_status",
+        description=(
+            "查询断面匹配状态与证据（只读）。matched_candidate 仍是候选结果，"
+            "不是正式关系；不接受 write_back 或 rule_version。"
+            "cross_section_id 与 page_id 必须且只能提供一个。"
+        ),
+        input_model=GetSectionMatchStatusInput,
+        handler_method="get_section_match_status",
     ),
 )
 
