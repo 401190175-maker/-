@@ -719,6 +719,131 @@ class GetTableCaptionStatusContractTests(unittest.TestCase):
         self.assertIn("部分回答", result.content[0].text)
 
 
+class GetDrawingDiagnosticsContractTests(unittest.TestCase):
+    """get_drawing_diagnostics must expose read-only page/block diagnostics."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_schema_scopes_and_read_switches(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        tool = next(item for item in listed.tools if item.name == "get_drawing_diagnostics")
+
+        self.assertIn("诊断", tool.description)
+        self.assertIn("不自动修复", tool.description)
+        schema = tool.inputSchema
+        self.assertEqual(
+            {
+                "page_id",
+                "block_id",
+                "language",
+                "include_semantics",
+                "include_candidates",
+            },
+            set(schema["properties"]),
+        )
+        self.assertNotIn("required", schema)
+        for forbidden in ("write_back", "fix", "import", "enhance", "recognize", "review"):
+            self.assertNotIn(forbidden, schema)
+        self.assertTrue(tool.annotations.readOnlyHint)
+        self.assertFalse(tool.annotations.destructiveHint)
+        self.assertFalse(tool.annotations.openWorldHint)
+
+    def test_both_scopes_map_to_diagnostics_and_preserve_switches(self):
+        from drawing_graph.qa_models import QuestionType
+
+        for scope_field, scope_value in (("page_id", "page:1"), ("block_id", "block:1")):
+            with self.subTest(scope=scope_field):
+                service = _FakeQAService()
+                server = self._server(service)
+
+                async def check():
+                    async with _client_session(server) as client:
+                        result = await client.call_tool(
+                            "get_drawing_diagnostics",
+                            {
+                                scope_field: scope_value,
+                                "include_semantics": False,
+                                "include_candidates": False,
+                            },
+                        )
+                        return result
+
+                result = _run(check())
+                self.assertFalse(result.isError)
+                self.assertEqual(1, len(service.requests))
+                request = service.requests[0]
+                self.assertEqual(QuestionType.DIAGNOSTIC_STATUS, request.question_type)
+                self.assertEqual(scope_value, getattr(request.scope, scope_field))
+                self.assertFalse(request.include_semantics)
+                self.assertFalse(request.include_candidates)
+                self.assertFalse(request.write_back)
+
+    def test_missing_scope_is_invalid_argument(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("get_drawing_diagnostics", {})
+                return result
+
+        result = _run(check())
+
+        self.assertTrue(result.isError)
+        self.assertEqual("invalid_argument", result.structuredContent["error"]["category"])
+
+    def test_output_preserves_diagnostic_warnings_and_unsupported_parts(self):
+        from drawing_graph.qa_models import (
+            AnswerFact,
+            QAAnswer,
+            QAAnswerStatus,
+            QAScope,
+            QuestionType,
+        )
+
+        answer = QAAnswer(
+            question_type=QuestionType.DIAGNOSTIC_STATUS,
+            scope=QAScope(page_id="page:1"),
+            status=QAAnswerStatus.ANSWERED,
+            summary="页面诊断：已导入",
+            facts=(
+                AnswerFact(
+                    fact_kind="diagnostic",
+                    label="导入可见性",
+                    status="confirmed",
+                    ids={"page_id": "page:1"},
+                    value="已导入",
+                ),
+            ),
+            warnings=("增强未执行",),
+            unsupported_parts=("语义证据未查询",),
+        )
+        server = self._server(_FakeQAService(result=answer))
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("get_drawing_diagnostics", {"page_id": "page:1"})
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        data = result.structuredContent["data"]
+        self.assertEqual("diagnostic", data["facts"][0]["fact_kind"])
+        self.assertEqual(["增强未执行"], data["warnings"])
+        self.assertEqual(["语义证据未查询"], data["unsupported_parts"])
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 

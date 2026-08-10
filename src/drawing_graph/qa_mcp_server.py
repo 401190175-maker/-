@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from .qa_mcp_models import (
     AskDrawingBlockInput,
     AskDrawingPageInput,
+    GetDrawingDiagnosticsInput,
     GetTableCaptionStatusInput,
     GetSectionMatchStatusInput,
     ListDrawingCandidatesInput,
@@ -107,6 +108,15 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         input_model=GetTableCaptionStatusInput,
         handler_method="get_table_caption_status",
+    ),
+    _ToolSpec(
+        name="get_drawing_diagnostics",
+        description=(
+            "查询页面或图块诊断状态（只读）。诊断不自动修复，也不触发导入、"
+            "增强、识别或写回。page_id 与 block_id 必须且只能提供一个。"
+        ),
+        input_model=GetDrawingDiagnosticsInput,
+        handler_method="get_drawing_diagnostics",
     ),
 )
 
