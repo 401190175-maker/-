@@ -231,6 +231,48 @@ class QAHttpConfig:
         )
 
 
+@dataclass(frozen=True)
+class QAMcpConfig:
+    """Immutable STDIO MCP runtime settings loaded from environment variables.
+
+    只服务本地 STDIO MCP adapter：包含 Neo4j 连接信息和日志级别，不复用
+    HTTP 的 host/port/CORS/token 等字段，也不扩大 :class:`ImportConfig`。
+    Neo4j 密码使用 ``repr=False`` 并在自定义 ``__repr__`` 中屏蔽。
+    """
+
+    neo4j_uri: str
+    neo4j_user: str
+    neo4j_password: str = field(repr=False)
+    log_level: str = "INFO"
+
+    @classmethod
+    def from_env(cls) -> "QAMcpConfig":
+        """Create a validated MCP configuration from process environment variables."""
+
+        env = os.environ
+        log_level = env.get("DRAWING_GRAPH_QA_MCP_LOG_LEVEL", "INFO").strip().upper()
+        if not log_level:
+            raise ConfigError("DRAWING_GRAPH_QA_MCP_LOG_LEVEL must not be empty")
+        return cls(
+            neo4j_uri=_required_env("NEO4J_URI"),
+            neo4j_user=_required_env("NEO4J_USER"),
+            neo4j_password=_required_env("NEO4J_PASSWORD"),
+            log_level=log_level,
+        )
+
+    def __repr__(self) -> str:
+        """Return a debug representation with the database password masked."""
+
+        return (
+            "QAMcpConfig("
+            f"neo4j_uri={self.neo4j_uri!r}, "
+            f"neo4j_user={self.neo4j_user!r}, "
+            "neo4j_password='********', "
+            f"log_level={self.log_level!r}"
+            ")"
+        )
+
+
 def _store_type(value: object, field_name: str) -> str:
     store_type = str(value).strip().lower()
     if store_type != "in_memory":

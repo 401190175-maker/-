@@ -263,5 +263,87 @@ class QAHttpConfigTests(unittest.TestCase):
             config.port = 9999
 
 
+class QAMcpConfigTests(unittest.TestCase):
+    """QAMcpConfig must be a narrow STDIO MCP runtime config."""
+
+    def setUp(self):
+        self.required_env = {
+            "NEO4J_URI": "bolt://localhost:7687",
+            "NEO4J_USER": "neo4j",
+            "NEO4J_PASSWORD": "mcp-super-secret",
+        }
+
+    def test_defaults_from_env(self):
+        from drawing_graph.config import QAMcpConfig
+
+        with patch.dict(os.environ, self.required_env, clear=True):
+            config = QAMcpConfig.from_env()
+
+        self.assertEqual("bolt://localhost:7687", config.neo4j_uri)
+        self.assertEqual("neo4j", config.neo4j_user)
+        self.assertEqual("mcp-super-secret", config.neo4j_password)
+        self.assertEqual("INFO", config.log_level)
+
+    def test_custom_log_level_is_parsed(self):
+        from drawing_graph.config import QAMcpConfig
+
+        env = {**self.required_env, "DRAWING_GRAPH_QA_MCP_LOG_LEVEL": "debug"}
+        with patch.dict(os.environ, env, clear=True):
+            config = QAMcpConfig.from_env()
+
+        self.assertEqual("DEBUG", config.log_level)
+
+    def test_missing_required_credential_reports_variable_name(self):
+        from drawing_graph.config import ConfigError, QAMcpConfig
+
+        env = dict(self.required_env)
+        del env["NEO4J_PASSWORD"]
+
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(ConfigError) as context:
+                QAMcpConfig.from_env()
+
+        self.assertIn("NEO4J_PASSWORD", str(context.exception))
+        self.assertNotIn("mcp-super-secret", str(context.exception))
+
+    def test_invalid_log_level_is_rejected(self):
+        from drawing_graph.config import ConfigError, QAMcpConfig
+
+        env = {**self.required_env, "DRAWING_GRAPH_QA_MCP_LOG_LEVEL": "   "}
+        with patch.dict(os.environ, env, clear=True):
+            with self.assertRaises(ConfigError) as context:
+                QAMcpConfig.from_env()
+
+        self.assertIn("DRAWING_GRAPH_QA_MCP_LOG_LEVEL", str(context.exception))
+
+    def test_password_is_not_exposed_in_repr(self):
+        from drawing_graph.config import QAMcpConfig
+
+        with patch.dict(os.environ, self.required_env, clear=True):
+            config = QAMcpConfig.from_env()
+
+        self.assertNotIn("mcp-super-secret", str(config))
+        self.assertNotIn("mcp-super-secret", repr(config))
+        self.assertIn("********", repr(config))
+
+    def test_config_is_frozen(self):
+        from drawing_graph.config import QAMcpConfig
+
+        with patch.dict(os.environ, self.required_env, clear=True):
+            config = QAMcpConfig.from_env()
+
+        with self.assertRaises(Exception):
+            config.log_level = "DEBUG"
+
+    def test_config_does_not_reuse_http_adapter_fields(self):
+        import dataclasses
+
+        from drawing_graph.config import QAMcpConfig
+
+        field_names = {item.name for item in dataclasses.fields(QAMcpConfig)}
+        for forbidden in ("host", "port", "allow_remote", "allowed_origins", "api_token", "docs_enabled"):
+            self.assertNotIn(forbidden, field_names)
+
+
 if __name__ == "__main__":
     unittest.main()
