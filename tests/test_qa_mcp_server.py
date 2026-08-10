@@ -265,6 +265,109 @@ class AskDrawingPageContractTests(unittest.TestCase):
         self.assertIn("部分回答", result.content[0].text)
 
 
+class AskDrawingBlockContractTests(unittest.TestCase):
+    """ask_drawing_block must expose a narrow block-relations contract."""
+
+    def _server(self, service):
+        from drawing_graph.qa_mcp_server import create_mcp_server
+        from drawing_graph.qa_mcp_tools import DrawingGraphMCPTools
+
+        return create_mcp_server(DrawingGraphMCPTools(service))
+
+    def test_tool_schema_annotations_and_description(self):
+        server = self._server(_FakeQAService())
+
+        async def check():
+            async with _client_session(server) as client:
+                listed = await client.list_tools()
+                return listed
+
+        listed = _run(check())
+        tool = next(item for item in listed.tools if item.name == "ask_drawing_block")
+
+        self.assertIn("图块", tool.description)
+        self.assertIn("候选", tool.description)
+        schema = tool.inputSchema
+        self.assertEqual(
+            {"block_id", "language", "include_candidates"},
+            set(schema["properties"]),
+        )
+        self.assertEqual(["block_id"], schema["required"])
+        self.assertTrue(schema["properties"]["include_candidates"]["default"])
+        self.assertTrue(tool.annotations.readOnlyHint)
+        self.assertFalse(tool.annotations.destructiveHint)
+        self.assertFalse(tool.annotations.openWorldHint)
+
+    def test_call_passes_include_candidates_and_preserves_candidate_kind(self):
+        from drawing_graph.qa_models import (
+            AnswerFact,
+            QAAnswer,
+            QAAnswerStatus,
+            QAScope,
+            QuestionType,
+        )
+
+        answer = QAAnswer(
+            question_type=QuestionType.BLOCK_RELATIONS,
+            scope=QAScope(block_id="block:1"),
+            status=QAAnswerStatus.ANSWERED,
+            summary="图块关系可用",
+            facts=(
+                AnswerFact(
+                    fact_kind="candidate_relation",
+                    label="候选标题关系",
+                    status="candidate",
+                    ids={"candidate_group_id": "group:1", "block_id": "block:1"},
+                    relation_type="CANDIDATE_CAPTION_OF",
+                ),
+            ),
+        )
+        service = _FakeQAService(result=answer)
+        server = self._server(service)
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool(
+                    "ask_drawing_block",
+                    {"block_id": "block:1", "include_candidates": False},
+                )
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        self.assertEqual(
+            "candidate_relation",
+            result.structuredContent["data"]["facts"][0]["fact_kind"],
+        )
+        self.assertEqual(
+            "CANDIDATE_CAPTION_OF",
+            result.structuredContent["data"]["facts"][0]["relation_type"],
+        )
+        self.assertEqual(1, len(service.requests))
+        request = service.requests[0]
+        self.assertEqual(QuestionType.BLOCK_RELATIONS, request.question_type)
+        self.assertEqual("block:1", request.scope.block_id)
+        self.assertFalse(request.include_candidates)
+        self.assertFalse(request.write_back)
+        self.assertFalse(request.include_payload)
+
+    def test_handler_is_the_only_business_entry_point(self):
+        service = _FakeQAService()
+        server = self._server(service)
+
+        async def check():
+            async with _client_session(server) as client:
+                result = await client.call_tool("ask_drawing_block", {"block_id": "block:1"})
+                return result
+
+        result = _run(check())
+
+        self.assertFalse(result.isError)
+        self.assertEqual(1, len(service.requests))
+        self.assertEqual("block:1", service.requests[0].scope.block_id)
+
+
 class _StubTools:
     """Minimal stand-in that server creation must not call during creation."""
 

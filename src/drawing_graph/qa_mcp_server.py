@@ -18,6 +18,7 @@ from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pydantic import ValidationError
 
 from .qa_mcp_models import (
+    AskDrawingBlockInput,
     AskDrawingPageInput,
     McpInputModel,
     McpQAError,
@@ -65,6 +66,15 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         input_model=AskDrawingPageInput,
         handler_method="ask_drawing_page",
+    ),
+    _ToolSpec(
+        name="ask_drawing_block",
+        description=(
+            "查询指定图块的派生关系与候选关系（只读）。scope 仅接受 block_id；"
+            "候选关系保持 candidate 分类，不等于正式事实。"
+        ),
+        input_model=AskDrawingBlockInput,
+        handler_method="ask_drawing_block",
     ),
 )
 
