@@ -8,9 +8,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, StrictBool, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from .qa_models import QARequest, QAScope, QuestionType
 
@@ -18,6 +18,46 @@ from .qa_models import QARequest, QAScope, QuestionType
 MCP_DEFAULT_LANGUAGE = "zh"
 MCP_ALLOWED_LANGUAGES = frozenset({"zh", "en"})
 MAX_SCOPE_ID_LENGTH = 512
+MCP_CONTRACT_VERSION = "drawing-qa-mcp-v1"
+MCP_TOOL_NAMES = (
+    "ask_drawing_page",
+    "ask_drawing_block",
+    "list_drawing_candidates",
+    "get_section_match_status",
+    "get_table_caption_status",
+    "get_drawing_diagnostics",
+)
+MCP_ERROR_CATEGORIES = (
+    "invalid_argument",
+    "unsupported_question",
+    "unsupported_scope",
+    "not_found",
+    "write_back_forbidden",
+    "facade_unavailable",
+    "neo4j_unavailable",
+    "semantic_evidence_unavailable",
+    "internal_error",
+)
+
+McpToolName: TypeAlias = Literal[
+    "ask_drawing_page",
+    "ask_drawing_block",
+    "list_drawing_candidates",
+    "get_section_match_status",
+    "get_table_caption_status",
+    "get_drawing_diagnostics",
+]
+McpErrorCategory: TypeAlias = Literal[
+    "invalid_argument",
+    "unsupported_question",
+    "unsupported_scope",
+    "not_found",
+    "write_back_forbidden",
+    "facade_unavailable",
+    "neo4j_unavailable",
+    "semantic_evidence_unavailable",
+    "internal_error",
+]
 
 
 class McpInputError(ValueError):
@@ -292,6 +332,42 @@ class GetDrawingDiagnosticsInput(McpInputModel):
         )
 
 
+class McpResultMeta(BaseModel):
+    """Per-result metadata shared by success and failure roots."""
+
+    contract_version: Literal["drawing-qa-mcp-v1"] = MCP_CONTRACT_VERSION
+    tool_name: McpToolName
+    call_id: str = Field(min_length=1, max_length=128)
+
+
+class McpQAError(BaseModel):
+    """Stable sanitized error object returned inside a failure root."""
+
+    category: McpErrorCategory
+    message: str = Field(min_length=1, max_length=2000)
+    retryable: bool
+    field: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class McpQASuccess(BaseModel):
+    """Stable success root: status, JSON-safe QAAnswer data, and meta."""
+
+    status: Literal["ok"] = "ok"
+    data: dict[str, Any]
+    meta: McpResultMeta
+
+
+class McpQAFailure(BaseModel):
+    """Stable failure root: status, sanitized error, and meta."""
+
+    status: Literal["error"] = "error"
+    error: McpQAError
+    meta: McpResultMeta
+
+
+McpToolOutcome: TypeAlias = McpQASuccess | McpQAFailure
+
+
 __all__ = (
     "AskDrawingBlockInput",
     "AskDrawingPageInput",
@@ -301,9 +377,19 @@ __all__ = (
     "ListDrawingCandidatesInput",
     "MAX_SCOPE_ID_LENGTH",
     "MCP_ALLOWED_LANGUAGES",
+    "MCP_CONTRACT_VERSION",
     "MCP_DEFAULT_LANGUAGE",
+    "MCP_ERROR_CATEGORIES",
+    "MCP_TOOL_NAMES",
+    "McpErrorCategory",
     "McpInputError",
     "McpInputModel",
+    "McpQAError",
+    "McpQAFailure",
+    "McpQASuccess",
+    "McpResultMeta",
+    "McpToolName",
+    "McpToolOutcome",
     "normalize_language",
     "normalize_scope_id",
 )

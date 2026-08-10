@@ -698,5 +698,161 @@ class GetDrawingDiagnosticsInputTests(unittest.TestCase):
         self.assertEqual({"block_id": "block:1"}, scope_ids)
 
 
+class McpResultModelTests(unittest.TestCase):
+    """Structured MCP result contract must stay stable and JSON-safe."""
+
+    def test_contract_version_is_stable(self):
+        from drawing_graph.qa_mcp_models import MCP_CONTRACT_VERSION
+
+        self.assertEqual("drawing-qa-mcp-v1", MCP_CONTRACT_VERSION)
+
+    def test_tool_names_are_exactly_the_six_design_tools(self):
+        from drawing_graph.qa_mcp_models import MCP_TOOL_NAMES
+
+        self.assertEqual(
+            (
+                "ask_drawing_page",
+                "ask_drawing_block",
+                "list_drawing_candidates",
+                "get_section_match_status",
+                "get_table_caption_status",
+                "get_drawing_diagnostics",
+            ),
+            MCP_TOOL_NAMES,
+        )
+
+    def test_meta_requires_valid_tool_name_and_non_empty_call_id(self):
+        from drawing_graph.qa_mcp_models import McpResultMeta
+        from pydantic import ValidationError
+
+        meta = McpResultMeta(tool_name="ask_drawing_page", call_id="call-1")
+        self.assertEqual("drawing-qa-mcp-v1", meta.contract_version)
+        self.assertEqual("call-1", meta.call_id)
+
+        with self.assertRaises(ValidationError):
+            McpResultMeta(tool_name="not_a_tool", call_id="call-1")
+        with self.assertRaises(ValidationError):
+            McpResultMeta(tool_name="ask_drawing_page", call_id="")
+
+    def test_success_root_contract(self):
+        from drawing_graph.qa_mcp_models import McpQASuccess, McpResultMeta
+
+        result = McpQASuccess(
+            data={
+                "status": "partial",
+                "summary": "部分回答",
+                "facts": [],
+                "warnings": ["x"],
+                "unsupported_parts": ["y"],
+            },
+            meta=McpResultMeta(tool_name="ask_drawing_page", call_id="call-1"),
+        )
+
+        self.assertEqual("ok", result.status)
+        self.assertEqual("partial", result.data["status"])
+        self.assertEqual("call-1", result.meta.call_id)
+
+    def test_success_status_cannot_be_error(self):
+        from drawing_graph.qa_mcp_models import McpQASuccess, McpResultMeta
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            McpQASuccess(
+                status="error",
+                data={"status": "answered"},
+                meta=McpResultMeta(tool_name="ask_drawing_page", call_id="call-1"),
+            )
+
+    def test_failure_root_contract(self):
+        from drawing_graph.qa_mcp_models import McpQAFailure, McpResultMeta
+
+        result = McpQAFailure(
+            error={
+                "category": "not_found",
+                "message": "未找到",
+                "retryable": False,
+                "field": "page_id",
+            },
+            meta=McpResultMeta(tool_name="ask_drawing_page", call_id="call-1"),
+        )
+
+        self.assertEqual("error", result.status)
+        self.assertEqual("not_found", result.error.category)
+        self.assertFalse(result.error.retryable)
+        self.assertEqual("page_id", result.error.field)
+
+    def test_failure_rejects_unknown_error_category(self):
+        from drawing_graph.qa_mcp_models import McpQAFailure, McpResultMeta
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            McpQAFailure(
+                error={"category": "made_up_category", "message": "x", "retryable": False},
+                meta=McpResultMeta(tool_name="ask_drawing_page", call_id="call-1"),
+            )
+
+    def test_tool_outcome_accepts_both_success_and_failure(self):
+        from drawing_graph.qa_mcp_models import McpQAFailure, McpQASuccess, McpResultMeta, McpToolOutcome
+        from pydantic import TypeAdapter
+
+        meta = McpResultMeta(tool_name="ask_drawing_block", call_id="call-2")
+        adapter = TypeAdapter(McpToolOutcome)
+        success = adapter.validate_python(
+            {"status": "ok", "data": {"status": "answered"}, "meta": meta.model_dump()}
+        )
+        failure = adapter.validate_python(
+            {
+                "status": "error",
+                "error": {"category": "internal_error", "message": "x", "retryable": False},
+                "meta": meta.model_dump(),
+            }
+        )
+
+        self.assertIsInstance(success, McpQASuccess)
+        self.assertIsInstance(failure, McpQAFailure)
+
+    def test_json_schemas_are_object_rooted_and_json_serializable(self):
+        import json
+
+        from drawing_graph.qa_mcp_models import McpQAFailure, McpQASuccess, McpToolOutcome
+        from pydantic import TypeAdapter
+
+        success_schema = McpQASuccess.model_json_schema()
+        failure_schema = McpQAFailure.model_json_schema()
+        outcome_schema = TypeAdapter(McpToolOutcome).json_schema()
+
+        for schema in (success_schema, failure_schema, outcome_schema):
+            json.dumps(schema)
+
+        self.assertEqual("object", success_schema["type"])
+        self.assertIn("status", success_schema["properties"])
+        self.assertIn("data", success_schema["properties"])
+        self.assertIn("meta", success_schema["properties"])
+        self.assertEqual("object", failure_schema["type"])
+        self.assertIn("error", failure_schema["properties"])
+
+    def test_schemas_do_not_expose_backend_objects_or_secrets(self):
+        import json
+
+        from drawing_graph.qa_mcp_models import McpQAFailure, McpQASuccess
+
+        schema_text = json.dumps(
+            {
+                **McpQASuccess.model_json_schema(),
+                **McpQAFailure.model_json_schema(),
+            }
+        ).lower()
+        for forbidden in (
+            "driver",
+            "session",
+            "transaction",
+            "cypher",
+            "password",
+            "token",
+            "neo4j_uri",
+        ):
+            self.assertNotIn(forbidden, schema_text)
+
+
 if __name__ == "__main__":
     unittest.main()
