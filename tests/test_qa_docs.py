@@ -26,9 +26,8 @@ class QaDocsBoundaryTests(unittest.TestCase):
             "write_back=false",
             "候选关系不是正式事实",
             "不直接写 Cypher",
-            "HTTP API",
             "MCP Tool adapter",
-            "第一阶段不实现 HTTP API",
+            "serve_drawing_graph_qa.py",
         ):
             self.assertIn(phrase, self.readme)
 
@@ -53,16 +52,18 @@ class QaDocsBoundaryTests(unittest.TestCase):
         for phrase in (
             "write_back=false",
             "候选关系不是正式事实",
-            "第一阶段不实现 HTTP API",
             "MCP Tool adapter",
             "OCR",
+            "单 worker",
+            "loopback",
         ):
             self.assertIn(phrase, self.architecture)
 
-    def test_docs_do_not_claim_http_or_mcp_completed(self):
+    def test_docs_do_not_claim_unimplemented_capabilities_completed(self):
         for document in (self.readme, self.module_doc, self.architecture):
-            self.assertNotIn("HTTP API 已完成", document)
             self.assertNotIn("MCP Tool adapter 已完成", document)
+            self.assertNotIn("Ava 专有 adapter 已完成", document)
+            self.assertNotIn("HTTP 写回已完成", document)
 
 
 if __name__ == "__main__":

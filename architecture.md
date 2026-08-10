@@ -15,14 +15,14 @@ Project -> DrawingSet -> DrawingPage -> DrawingBlock
 - 候选关系复核流程：显式读取完整候选集合，经过独立复核和硬性规则校验后，只在满足规则时提升正式关系。
 - 按需语义证据流程：通过 `DrawingGraphToolFacade` 调用语义服务、缓存、图谱外运行日志和语义 repository；默认 dry-run，只在显式 `write_back=true` 时写入语义证据或受控语义边。
 
-当前阶段仍不包含 OCR、Agent Skill、HTTP/REST API、全量自动语义扫描、默认真实云模型调用、`NEAR` 空间关系网络，也不设置或推断 `DrawingBlock.block_type`。
+当前阶段仍不包含 OCR、Agent Skill、MCP Tool adapter、全量自动语义扫描、默认真实云模型调用、`NEAR` 空间关系网络，也不设置或推断 `DrawingBlock.block_type`；只读 HTTP API 已实现，见 QA 编排入口。
 `MATCHES_SECTION_CAPTION`（`CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`）不是默认生成关系；只有在双方存在可比较 `TextObservation`、规范化逻辑键一致、同页候选唯一且无规则冲突时才可作为正式语义关系写入。证据不足、多候选、跨页或规则边界不明确时，只返回或写入 `CANDIDATE_MATCHES_SECTION_CAPTION`，不得把候选判断投影为正式事实。
 
-模块职责、新接口、新依赖、数据变化和架构变化同步记录在 `Module.md`，单页端到端 CLI 验收见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。当前已新增 Python 应用层 `DrawingGraphToolFacade`：它通过只读 port 包装 `QueryService` 能力，通过 `SemanticRecognitionService` 编排按需语义识别，并通过 `RecognitionRunLogPort` 与 `SemanticEvidenceRepositoryPort` 管理语义证据边界。语义证据层已落地：`TextObservation` 与三类 `Interpretation` 数据契约、确定性缓存键与内存缓存、不可变 payload 存储、基于来源事实的图像输入构造、图谱内语义节点幂等写入（`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`，以及 `HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`）、图谱外 `RecognitionRun` 日志（recognition/interpretation/candidate_review 三类 run）、稳定查询投影和 facade 语义查询。断面专项已落地：`SectionLabelNormalizer` 区分 alphabetic/roman/numeric/alphanumeric/unknown，`SectionAliasRuleStore` 管理图谱外已确认别名规则，`SectionMatchService` 仅在双方存在可比较 `TextObservation`、逻辑键一致、候选唯一且无冲突时给出正式匹配，否则只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`。默认 `write_back=false`，语义识别与断面匹配以 dry-run 返回临时结果；只有显式 `write_back=true` 才写入图谱外 run log、图谱内证据或受控语义边。`RecognitionRun` 图谱外，`TextObservation` 图谱内，二者只通过 `recognition_run_id` 关联。候选关系不是正式事实，`matched_candidate` 也不等于正式图谱关系；候选审核仍必须经过 `CandidateReviewService` 和硬规则。当前仍未实现 HTTP API、Agent Skill、MCP Tool adapter、全量自动语义扫描或默认真实云模型调用；真实 Neo4j 语义写入的 live 验证仍以独立 disposable 测试库为准。
+模块职责、新接口、新依赖、数据变化和架构变化同步记录在 `Module.md`，单页端到端 CLI 验收见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。当前已新增 Python 应用层 `DrawingGraphToolFacade`：它通过只读 port 包装 `QueryService` 能力，通过 `SemanticRecognitionService` 编排按需语义识别，并通过 `RecognitionRunLogPort` 与 `SemanticEvidenceRepositoryPort` 管理语义证据边界。语义证据层已落地：`TextObservation` 与三类 `Interpretation` 数据契约、确定性缓存键与内存缓存、不可变 payload 存储、基于来源事实的图像输入构造、图谱内语义节点幂等写入（`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`，以及 `HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`）、图谱外 `RecognitionRun` 日志（recognition/interpretation/candidate_review 三类 run）、稳定查询投影和 facade 语义查询。断面专项已落地：`SectionLabelNormalizer` 区分 alphabetic/roman/numeric/alphanumeric/unknown，`SectionAliasRuleStore` 管理图谱外已确认别名规则，`SectionMatchService` 仅在双方存在可比较 `TextObservation`、逻辑键一致、候选唯一且无冲突时给出正式匹配，否则只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`。默认 `write_back=false`，语义识别与断面匹配以 dry-run 返回临时结果；只有显式 `write_back=true` 才写入图谱外 run log、图谱内证据或受控语义边。`RecognitionRun` 图谱外，`TextObservation` 图谱内，二者只通过 `recognition_run_id` 关联。候选关系不是正式事实，`matched_candidate` 也不等于正式图谱关系；候选审核仍必须经过 `CandidateReviewService` 和硬规则。当前已实现只读 HTTP API（`src/drawing_graph/qa_http.py` + `scripts\serve_drawing_graph_qa.py`），仍未实现 Agent Skill、MCP Tool adapter、全量自动语义扫描、默认真实云模型调用或 HTTP 写回；真实 Neo4j 语义写入的 live 验证仍以独立 disposable 测试库为准。
 
 当前实现状态：基础 Neo4j 导入闭环、离线派生关系增强闭环和候选关系复核骨架已经完成。基础导入负责来源事实层的稳定入库与追溯；离线增强负责 `Table -[:HAS_CAPTION]-> TableCaption`、`DrawingPage -[:USES_BASIC_INFO]-> DrawingBasicInfo`、`DrawingBlock` 起点的 `HAS_CAPTION`、`HAS_ANNOTATION`、`HAS_SECTION_MARK` 正式派生关系，以及 `CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK` 空间候选关系。候选关系 AI 复核是独立显式流程，不挂到基础导入或默认离线增强；查询侧通过 `get_block_trace()` 和 `get_block_relations()` 返回可复核的业务 ID、图片路径、bbox、候选 ID 和增强状态。
 
-QA 编排层已落地：`DrawingGraphQAService`（`src/drawing_graph/qa_service.py`）与薄 QA CLI（`scripts\drawing_graph_qa.py`）位于 `DrawingGraphToolFacade` 外侧，默认只读（`write_back=false`），只通过 facade 获取图谱信息，不直接访问 Neo4j driver、Cypher、repository 写回方法或离线规则函数；结构化 `QAAnswer` 按 `source_fact`、`derived_relation`、`semantic_observation`、`semantic_interpretation`、`candidate_relation`、`formal_relation`、`diagnostic`、`unsupported` 分层输出。
+QA 编排层已落地：`DrawingGraphQAService`（`src/drawing_graph/qa_service.py`）与薄 QA CLI（`scripts\drawing_graph_qa.py`）、HTTP adapter（`src/drawing_graph/qa_http.py` + `scripts\serve_drawing_graph_qa.py`）位于 `DrawingGraphToolFacade` 外侧，默认只读（`write_back=false`），只通过 facade 获取图谱信息，不直接访问 Neo4j driver、Cypher、repository 写回方法或离线规则函数；结构化 `QAAnswer` 按 `source_fact`、`derived_relation`、`semantic_observation`、`semantic_interpretation`、`candidate_relation`、`formal_relation`、`diagnostic`、`unsupported` 分层输出。HTTP adapter 与 CLI 同级，依赖方向固定为 `HTTP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`，默认 loopback、单 worker、只读。
 
 ## 2. 整体分层
 
@@ -67,8 +67,9 @@ QA 编排层已落地：`DrawingGraphQAService`（`src/drawing_graph/qa_service.
   -> 同页候选比较和别名规则检查
   -> CANDIDATE_MATCHES_SECTION_CAPTION 或 MATCHES_SECTION_CAPTION
 
-QA 编排入口（第一阶段）
+QA 编排入口
   -> QA adapter（scripts\drawing_graph_qa.py）
+  -> HTTP adapter（scripts\serve_drawing_graph_qa.py + src/drawing_graph/qa_http.py）
   -> DrawingGraphQAService
   -> DrawingGraphToolFacade
   -> ports / services / repository / Neo4j
@@ -79,11 +80,11 @@ QA 编排入口（第一阶段）
 - `scripts/import_json.py` 只负责基础导入的命令行参数、配置加载和服务编排，不自动触发表格标题或 block 级派生关系增强。
 - `scripts/enrich_block_relations.py` 作为兼容入口名称保留，只负责离线派生关系增强的命令行参数、配置加载、增强范围创建和服务调用，不包含匹配规则或 Cypher 细节，也不自动运行 AI 候选复核。
 - `scripts/review_candidate_relations.py` 是候选关系 AI 复核的显式入口，只通过注入客户端和服务接口处理 `accepted`、`rejected`、`unresolved` 三态结果。
-- QA 层依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`；QAService 不创建 Neo4j driver、不写 Cypher、不读取环境变量，adapter 只在最外层管理 driver 生命周期。
+- QA 层依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`（HTTP adapter 与 CLI 同级）；QAService 不创建 Neo4j driver、不写 Cypher、不读取环境变量，adapter 只在最外层管理 driver 生命周期。
 - 业务逻辑集中在 `src/drawing_graph/`，按扫描、校验、规范化、映射、持久化、审计、查询和关系增强拆分。
 - Schema 初始化和数据导入分离，导入过程不隐式修改数据库结构。
 - Neo4j 写入使用稳定业务 ID、固定标签/关系白名单和参数化 Cypher。
-- 查询服务只提供预定义 Python 内部接口，不开放任意 Cypher 或 HTTP API。
+- 查询服务本身只提供预定义 Python 内部接口；HTTP 只能经由 QA adapter 的版本化只读路由使用，不开放任意 Cypher。
 
 ## 3. 数据流
 
@@ -400,7 +401,7 @@ JSON 文件
 - 不做全量自动语义扫描，不默认调用真实外部多模态模型供应商。
 - 不实现 Agent Skill。
 - 项目级 Codex Skill `.codex/skills/drawing-graph-operator/` 只是 facade 外侧的操作层，不属于 Agent Skill、MCP Tool adapter、HTTP/REST API 或文件 watcher。
-- 不提供 HTTP/REST API。
+- 不提供 HTTP 写回、任意 Cypher HTTP 接口或 MCP Tool adapter；HTTP 只读 QA 已实现。
 - 不生成或推断 `block_type`。
 - 只有在双方存在可比较 `TextObservation`、规范化逻辑键一致、同页候选唯一且无规则冲突时才建立 `CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`；多候选、证据冲突或规则边界不明确时只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`，不跨页面自动匹配。
 - 不建立 `NEAR` 空间关系网络。
@@ -408,7 +409,7 @@ JSON 文件
 - 不让基础导入流程自动触发离线派生关系增强。
 - 不让离线派生关系增强默认触发候选关系 AI 复核；复核必须通过显式命令或服务调用执行。
 - 不把 `CANDIDATE_*` 候选关系当作正式事实；只有 accepted 且通过硬性规则校验的候选才能提升为正式关系。
-- QA 编排第一阶段默认只读、`write_back=false`；候选关系不是正式事实，`matched_candidate` 不写成正式图谱关系；QAService 不直接写 Cypher。第一阶段不实现 HTTP API、MCP Tool adapter、Ava 对接、OCR、真实模型供应商和数据库 schema 变更。
+- QA 编排默认只读、`write_back=false`；候选关系不是正式事实，`matched_candidate` 不写成正式图谱关系；QAService 不直接写 Cypher。HTTP API 默认 loopback、单 worker，`/health/live` 与 `/health/ready` 不等于 live Neo4j 验证；MCP Tool adapter、Ava 专有 adapter、OCR、真实模型供应商、数据库 schema 变更和 HTTP 写回仍未实现。
 
 这些边界使当前阶段聚焦在可重复导入、稳定 ID、图谱层级、位置证据、离线可审计关系增强和查询追溯闭环上。
 

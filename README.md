@@ -1,10 +1,10 @@
 # 图块图谱构建使用说明
 
-本项目将 XAnyLabeling 标注 JSON 和同目录同名 PNG 导入 Neo4j，形成 `Project -> DrawingSet -> DrawingPage -> DrawingBlock` 及页面元素的可追溯图谱。当前阶段只做来源事实导入、离线派生关系增强、显式候选关系 AI 复核骨架、批次审计和只读查询，不做 OCR、Agent Skill、HTTP API 或完整图纸语义推理。
+本项目将 XAnyLabeling 标注 JSON 和同目录同名 PNG 导入 Neo4j，形成 `Project -> DrawingSet -> DrawingPage -> DrawingBlock` 及页面元素的可追溯图谱。当前阶段只做来源事实导入、离线派生关系增强、显式候选关系 AI 复核骨架、批次审计和只读查询，不做 OCR、Agent Skill、MCP Tool adapter 或完整图纸语义推理；已提供默认本机监听、默认只读的 HTTP API（见第 9 节）。
 
 当前闭环状态：基础导入、离线派生关系增强、候选关系复核服务骨架和查询验证已经形成流程。推荐运行顺序是初始化 Schema，执行 `scripts\import_json.py all` 写入来源事实，再显式执行 `scripts\enrich_block_relations.py project --rule-version <version>` 写入表格标题、页面级基础信息上下文、block 级正式派生关系和空间候选边；如需复核候选关系，再显式执行 `scripts\review_candidate_relations.py candidate-group ...`。最后用 `QueryService.get_block_trace()` 和 `QueryService.get_block_relations()` 验证单个图块的位置证据、候选 ID 与派生关系状态。
 
-模块职责、新接口、新依赖、数据变化和架构变化见 `Module.md`；该文档按当前代码实现记录维护边界，不把未实现的 OCR、HTTP API、Agent Skill、MCP Tool adapter 或全量自动语义扫描当作已完成能力。单页端到端 CLI 验收证据见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收证据见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`，面向普通用户的最短运行流程见 `docs/acceptance/USER_RUNBOOK.md`。
+模块职责、新接口、新依赖、数据变化和架构变化见 `Module.md`；该文档按当前代码实现记录维护边界，不把未实现的 OCR、Agent Skill、MCP Tool adapter 或全量自动语义扫描当作已完成能力；HTTP API 当前实现见第 9 节。单页端到端 CLI 验收证据见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收证据见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`，面向普通用户的最短运行流程见 `docs/acceptance/USER_RUNBOOK.md`。
 
 当前还新增了 Python 应用层 `DrawingGraphToolFacade`，以及 `scripts\drawing_graph_tool.py` 这个薄 CLI adapter。CLI adapter 只负责从环境变量读取 Neo4j 连接配置、创建 driver、调用 facade 并输出 JSON；它不保存 Neo4j 密码，不暴露 Cypher，不提供 HTTP API，也不是 Agent Skill 或 MCP Tool adapter。facade 默认 `write_back=false`：查询为只读，语义识别为 dry-run，只返回临时 `recognition_run_id`、observation 和 interpretation；只有显式 `write_back=true` 才写入图谱外 run log 和图谱内语义证据。`RecognitionRun` 图谱外，`TextObservation` 图谱内，候选关系不是正式事实，`matched_candidate` 也不能当作正式图谱关系。
 
@@ -188,11 +188,11 @@ python scripts\review_candidate_relations.py candidate-group --relation-spec can
 - `candidate_review_write_failed`：复核状态或正式提升写回失败。
 - `relation_write_failed`：block 级派生关系写入 Neo4j 失败。
 
-边界约束：离线派生关系增强不修改 `scripts\import_json.py` 的导入闭环，不删除或替换 `DrawingPage` 起点的页面级来源关系，不做 OCR、不跨页面自动匹配断面、不在证据不足或候选不唯一时建立 `CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`，不开发 Agent Skill、不提供 HTTP API、不新增 `NEAR` 空间关系，也不设置或推断 `DrawingBlock.block_type`；离线派生关系增强不会自动触发多模态识别或候选关系 AI 复核。
+边界约束：离线派生关系增强不修改 `scripts\import_json.py` 的导入闭环，不删除或替换 `DrawingPage` 起点的页面级来源关系，不做 OCR、不跨页面自动匹配断面、不在证据不足或候选不唯一时建立 `CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`，不开发 Agent Skill、不新增 HTTP 写回或 `NEAR` 空间关系，也不设置或推断 `DrawingBlock.block_type`；离线派生关系增强不会自动触发多模态识别或候选关系 AI 复核。
 
 ## 7. 查询验证
 
-查询服务是 Python 内部接口，不提供 HTTP API。可以用下面的方式做最小验证：
+查询服务本身仍是 Python 内部接口，不直接开放 HTTP；对外 HTTP 入口见第 9 节。可以用下面的方式做最小验证：
 
 ```powershell
 @'
@@ -248,9 +248,48 @@ python scripts\drawing_graph_qa.py ask-block --block-id block:road-project:lslq_
 python scripts\drawing_graph_qa.py ask-candidates --page-id page:road-project:lslq_yhd_2_1:road_24 --format json
 ```
 
-输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。第一阶段不实现 HTTP API、MCP Tool adapter、Ava 对接、OCR、真实模型供应商和数据库 schema 变更。
+输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。HTTP API 见下一节；MCP Tool adapter、Ava 专有 adapter、OCR、真实模型供应商和数据库 schema 变更仍未实现。
 
-## 9. 测试命令
+## 9. HTTP API（第二阶段）
+
+`src/drawing_graph/qa_http.py` 与 `scripts\serve_drawing_graph_qa.py` 提供版本化、默认本机监听、默认只读的 HTTP adapter。调用链固定为 `HTTP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`；HTTP 路由只构造 `QARequest` 并调用 `DrawingGraphQAService.ask()`，不直接访问 facade、repository、Cypher 或 Neo4j。
+
+启动服务（所有配置来自环境变量，不接受密码、token 或 API key 命令行参数）：
+
+```powershell
+$env:NEO4J_URI = "bolt://127.0.0.1:7687"
+$env:NEO4J_USER = "neo4j"
+$env:NEO4J_PASSWORD = "<your-password>"
+python scripts\serve_drawing_graph_qa.py
+```
+
+HTTP 专用环境变量：
+
+- `DRAWING_GRAPH_QA_HTTP_HOST`：默认 `127.0.0.1`（loopback）。
+- `DRAWING_GRAPH_QA_HTTP_PORT`：默认 `8000`。
+- `DRAWING_GRAPH_QA_HTTP_ALLOW_REMOTE`：默认 `false`；非 loopback 绑定必须同时显式允许远程并配置 token。
+- `DRAWING_GRAPH_QA_HTTP_API_TOKEN`：可选 Bearer token；配置后业务路由和 `/health/ready` 需要 `Authorization: Bearer <token>`，`/health/live` 始终匿名。
+- `DRAWING_GRAPH_QA_HTTP_ALLOWED_ORIGINS`：可选显式 origin 白名单，默认空（不启用 CORS），不接受 `*`。
+- `DRAWING_GRAPH_QA_HTTP_MAX_REQUEST_BYTES`（默认 65536）、`DRAWING_GRAPH_QA_HTTP_REQUEST_TIMEOUT_SECONDS`（默认 30）、`DRAWING_GRAPH_QA_HTTP_MAX_CONCURRENT_REQUESTS`（默认 8）、`DRAWING_GRAPH_QA_HTTP_DOCS_ENABLED`（默认 `false`，仅允许 loopback）、`DRAWING_GRAPH_QA_HTTP_LOG_LEVEL`（默认 INFO）。
+
+最小只读请求：
+
+```powershell
+$body = @{ question_type = "page_summary"; scope = @{ page_id = "page:road-project:lslq_yhd_2_1:road_24" } } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/drawing-qa/ask -ContentType "application/json" -Body $body
+```
+
+版本化入口：`POST /api/v1/drawing-qa/ask`（权威入口）、`GET /api/v1/drawing-qa/pages/{page_id}/summary`、`GET /api/v1/drawing-qa/blocks/{block_id}/relations`、`GET /api/v1/drawing-qa/candidates`、`GET /api/v1/drawing-qa/section-matches`、`GET /api/v1/drawing-qa/table-captions/status`、`GET /api/v1/drawing-qa/diagnostics`，以及 `GET /health/live` 和 `GET /health/ready`。
+
+安全与验证边界：
+
+- 默认 `write_back=false`，HTTP 不提供任何写回、候选提升或正式关系提升入口；`write_back=true` 返回 403。
+- 候选关系、`matched_candidate`、语义观察与解释继续保持 `candidate_relation`、`semantic_observation`、`semantic_interpretation` 分层，不提升为正式事实。
+- 默认单 worker、loopback、CORS 关闭、OpenAPI docs 关闭；远程绑定必须显式开启，并要求外部 TLS（由外部反向代理提供）。
+- `GET /health/ready` 返回 `neo4j_status="not_checked"`：进程存活或 runtime 已装配**不等于 live Neo4j 验证**；live Neo4j 只有配置 disposable 测试库并实际运行集成测试后才能声称已验证。
+- 请求体超限返回 413、并发上限返回 429、等待超时返回 504；错误消息经共享脱敏，不返回 traceback、URI、密码、token 或底层类名。
+
+## 10. 测试命令
 
 333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收已记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。该记录使用 `road-full-20260807-acceptance` 前缀保留验收数据，便于 Neo4j Browser 复查；真实密码未写入仓库文件。
 
@@ -297,7 +336,7 @@ python -m unittest tests.integration.test_neo4j_semantic_evidence -v
 
 集成测试会初始化 Schema、导入样例页面、验证重复导入幂等性、基础导入不写 `Table -[:HAS_CAPTION]-> TableCaption`、离线派生关系增强幂等性、表格标题 legacy 兼容、`USES_BASIC_INFO`、`CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK`、`HAS_SECTION_MARK` 写入和查询闭环，并验证语义证据层 live Neo4j 闭环：`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`、`HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`、`CANDIDATE_MATCHES_SECTION_CAPTION`、`MATCHES_SECTION_CAPTION` 的真实写入、幂等和查询投影，同时确认不创建 `RecognitionRun` 图谱节点。测试结束后会清理本轮测试数据。
 
-## 10. 常见错误
+## 11. 常见错误
 
 - `DRAWING_GRAPH_DATA_ROOT is required`：缺少必需环境变量，按第 2 节设置后重试。
 - `DRAWING_GRAPH_BATCH_SIZE must be a positive integer`：批量大小不是正整数。

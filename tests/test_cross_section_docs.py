@@ -29,7 +29,7 @@ class CrossSectionDocsTest(unittest.TestCase):
         self.assertIn("只有在双方存在可比较 `TextObservation`", self.architecture)
         self.assertIn("不做 OCR", self.architecture)
         self.assertIn("不实现 Agent Skill", self.architecture)
-        self.assertIn("不提供 HTTP/REST API", self.architecture)
+        self.assertIn("不提供 HTTP 写回、任意 Cypher HTTP 接口或 MCP Tool adapter", self.architecture)
         self.assertIn("不建立 `NEAR` 空间关系网络", self.architecture)
         self.assertIn("不生成或推断 `block_type`", self.architecture)
 
@@ -56,7 +56,7 @@ class CrossSectionDocsTest(unittest.TestCase):
         self.assertIn("不返回 OCR 文本", self.readme)
         self.assertIn("不返回 Agent 推理字段", self.readme)
         self.assertIn("不提供 HTTP API", self.readme)
-        self.assertIn("不新增 `NEAR` 空间关系", self.readme)
+        self.assertIn("不新增 HTTP 写回或 `NEAR` 空间关系", self.readme)
         self.assertIn("不设置或推断 `DrawingBlock.block_type`", self.readme)
 
 
