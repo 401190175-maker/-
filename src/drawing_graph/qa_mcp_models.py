@@ -84,7 +84,38 @@ class AskDrawingPageInput(McpInputModel):
         )
 
 
+class AskDrawingBlockInput(McpInputModel):
+    """Narrow input for the ``ask_drawing_block`` tool (block_relations)."""
+
+    block_id: str
+    language: str = MCP_DEFAULT_LANGUAGE
+    include_candidates: StrictBool = True
+
+    @field_validator("block_id")
+    @classmethod
+    def _validate_block_id(cls, value: str) -> str:
+        return normalize_scope_id(value, "block_id")
+
+    @field_validator("language")
+    @classmethod
+    def _validate_language(cls, value: str) -> str:
+        return normalize_language(value)
+
+    def to_qa_request(self) -> QARequest:
+        """Convert to a fixed read-only ``block_relations`` request."""
+
+        return QARequest(
+            question_type=QuestionType.BLOCK_RELATIONS,
+            scope=QAScope(block_id=self.block_id),
+            language=self.language,
+            include_candidates=self.include_candidates,
+            include_payload=False,
+            write_back=False,
+        )
+
+
 __all__ = (
+    "AskDrawingBlockInput",
     "AskDrawingPageInput",
     "MAX_SCOPE_ID_LENGTH",
     "MCP_ALLOWED_LANGUAGES",
