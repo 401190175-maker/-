@@ -4,7 +4,20 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = PROJECT_ROOT / ".codex" / "skills" / "drawing-graph-operator"
+
+
+def _authoritative_skill_dir():
+    """Resolve the single authoritative Skill copy if exactly one exists."""
+
+    codex_dir = PROJECT_ROOT / ".codex" / "skills" / "drawing-graph-operator"
+    agents_dir = PROJECT_ROOT / ".agents" / "skills" / "drawing-graph-operator"
+    present = [path for path in (agents_dir, codex_dir) if path.is_dir()]
+    if len(present) == 1:
+        return present[0]
+    return codex_dir
+
+
+SKILL_DIR = _authoritative_skill_dir()
 
 
 class SkillDocsTest(unittest.TestCase):
@@ -357,6 +370,34 @@ class DrawingGraphSkillEntryTests(unittest.TestCase):
 
     def test_skill_remains_an_operation_strategy_layer(self):
         self.assertIn("操作策略层", self.text)
+
+
+class DrawingGraphSkillSingleAuthorityTests(unittest.TestCase):
+    """The repository must keep exactly one authoritative Skill copy."""
+
+    CANDIDATES = (
+        PROJECT_ROOT / ".codex" / "skills" / "drawing-graph-operator",
+        PROJECT_ROOT / ".agents" / "skills" / "drawing-graph-operator",
+    )
+
+    def test_exactly_one_authoritative_copy_exists(self):
+        present = [path for path in self.CANDIDATES if (path / "SKILL.md").is_file()]
+        self.assertEqual(1, len(present), f"skill copies present: {present}")
+
+    def test_authoritative_copy_has_all_required_files(self):
+        required = (
+            "SKILL.md",
+            "agents/openai.yaml",
+            "references/project-boundaries.md",
+            "references/facade-workflows.md",
+            "references/verification.md",
+            "references/output-contract.md",
+            "references/qa-workflows.md",
+            "references/mcp-boundaries.md",
+        )
+        for name in required:
+            with self.subTest(name=name):
+                self.assertTrue((SKILL_DIR / name).is_file(), f"missing in {SKILL_DIR}: {name}")
 
 
 if __name__ == "__main__":
