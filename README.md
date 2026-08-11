@@ -1,10 +1,10 @@
 # 图块图谱构建使用说明
 
-本项目将 XAnyLabeling 标注 JSON 和同目录同名 PNG 导入 Neo4j，形成 `Project -> DrawingSet -> DrawingPage -> DrawingBlock` 及页面元素的可追溯图谱。当前阶段只做来源事实导入、离线派生关系增强、显式候选关系 AI 复核骨架、批次审计和只读查询，不做 OCR、Agent Skill、MCP Tool adapter 或完整图纸语义推理；已提供默认本机监听、默认只读的 HTTP API（见第 9 节）。
+本项目将 XAnyLabeling 标注 JSON 和同目录同名 PNG 导入 Neo4j，形成 `Project -> DrawingSet -> DrawingPage -> DrawingBlock` 及页面元素的可追溯图谱。当前阶段只做来源事实导入、离线派生关系增强、显式候选关系 AI 复核骨架、批次审计和只读查询，不做 OCR、Ava 专有 adapter 或完整图纸语义推理；已提供默认本机监听、默认只读的 HTTP API（见第 10 节）和本机 STDIO、默认只读的 MCP adapter（见第 9 节）。
 
 当前闭环状态：基础导入、离线派生关系增强、候选关系复核服务骨架和查询验证已经形成流程。推荐运行顺序是初始化 Schema，执行 `scripts\import_json.py all` 写入来源事实，再显式执行 `scripts\enrich_block_relations.py project --rule-version <version>` 写入表格标题、页面级基础信息上下文、block 级正式派生关系和空间候选边；如需复核候选关系，再显式执行 `scripts\review_candidate_relations.py candidate-group ...`。最后用 `QueryService.get_block_trace()` 和 `QueryService.get_block_relations()` 验证单个图块的位置证据、候选 ID 与派生关系状态。
 
-模块职责、新接口、新依赖、数据变化和架构变化见 `Module.md`；该文档按当前代码实现记录维护边界，不把未实现的 OCR、Agent Skill、MCP Tool adapter 或全量自动语义扫描当作已完成能力；HTTP API 当前实现见第 9 节。单页端到端 CLI 验收证据见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收证据见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`，面向普通用户的最短运行流程见 `docs/acceptance/USER_RUNBOOK.md`。
+模块职责、新接口、新依赖、数据变化和架构变化见 `Module.md`；该文档按当前代码实现记录维护边界，不把未实现的 OCR、Ava 专有 adapter 或全量自动语义扫描当作已完成能力；HTTP API 当前实现见第 10 节，本地只读 MCP adapter 当前实现见第 9 节。单页端到端 CLI 验收证据见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收证据见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`，面向普通用户的最短运行流程见 `docs/acceptance/USER_RUNBOOK.md`。
 
 当前还新增了 Python 应用层 `DrawingGraphToolFacade`，以及 `scripts\drawing_graph_tool.py` 这个薄 CLI adapter。CLI adapter 只负责从环境变量读取 Neo4j 连接配置、创建 driver、调用 facade 并输出 JSON；它不保存 Neo4j 密码，不暴露 Cypher，不提供 HTTP API，也不是 Agent Skill 或 MCP Tool adapter。facade 默认 `write_back=false`：查询为只读，语义识别为 dry-run，只返回临时 `recognition_run_id`、observation 和 interpretation；只有显式 `write_back=true` 才写入图谱外 run log 和图谱内语义证据。`RecognitionRun` 图谱外，`TextObservation` 图谱内，候选关系不是正式事实，`matched_candidate` 也不能当作正式图谱关系。
 
@@ -192,7 +192,7 @@ python scripts\review_candidate_relations.py candidate-group --relation-spec can
 
 ## 7. 查询验证
 
-查询服务本身仍是 Python 内部接口，不直接开放 HTTP；对外 HTTP 入口见第 9 节。可以用下面的方式做最小验证：
+查询服务本身仍是 Python 内部接口，不直接开放 HTTP；对外 HTTP 入口见第 10 节。可以用下面的方式做最小验证：
 
 ```powershell
 @'
@@ -248,9 +248,44 @@ python scripts\drawing_graph_qa.py ask-block --block-id block:road-project:lslq_
 python scripts\drawing_graph_qa.py ask-candidates --page-id page:road-project:lslq_yhd_2_1:road_24 --format json
 ```
 
-输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。HTTP API 见下一节；MCP Tool adapter、Ava 专有 adapter、OCR、真实模型供应商和数据库 schema 变更仍未实现。
+输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。HTTP API 见第 10 节，本地只读 MCP adapter 见第 9 节；Ava 专有 adapter、OCR、真实模型供应商和数据库 schema 变更仍未实现。
 
-## 9. HTTP API（第二阶段）
+## 9. MCP 只读工具（第三阶段）
+
+`src/drawing_graph/qa_mcp_*.py` 与 `scripts\serve_drawing_graph_mcp.py` 提供本机 STDIO、默认只读的 MCP adapter。调用链固定为 `MCP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`；MCP 不调用 HTTP API 或 QA CLI 子进程，每个业务工具只构造 `QARequest` 并调用一次 `DrawingGraphQAService.ask()`。
+
+依赖安装与 QA CLI/HTTP 相同：
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+启动前设置与 QA CLI 相同的 Neo4j 环境变量（`NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD`），可选 `DRAWING_GRAPH_QA_MCP_LOG_LEVEL`（默认 INFO）。MCP server 名称固定为 `drawing-graph-qa`，STDIO 启动命令：
+
+```powershell
+python scripts\serve_drawing_graph_mcp.py
+```
+
+脚本不接受 host、port、worker、HTTP token 或远程 transport 参数；stdout 只承载 MCP 协议帧，诊断日志进入 stderr 并经共享脱敏。
+
+首版只注册六个窄口径只读工具，每个工具固定 `write_back=false` 且 `include_payload=false`：
+
+| 工具 | 用途 | 必需 scope |
+|---|---|---|
+| `ask_drawing_page` | 页面摘要与事实 | `page_id` |
+| `ask_drawing_block` | 图块关系 | `block_id` |
+| `list_drawing_candidates` | 候选关系列表 | `page_id` 或 `block_id` |
+| `get_section_match_status` | 断面匹配状态 | `cross_section_id` 或 `page_id` |
+| `get_table_caption_status` | 表格/表题状态 | `table_id`、`table_caption_id` 或 `page_id` |
+| `get_drawing_diagnostics` | 页面/图块诊断 | `page_id` 或 `block_id` |
+
+Codex 项目级 MCP 配置只记录 server 名、启动命令、工作目录和允许转发的环境变量名，不写真实凭据值；建议客户端对六个工具使用显式 allowlist。MCP 不可用时，`drawing-graph-operator` Skill 会先明确说明，再按 `references/mcp-boundaries.md` 透明降级到只读 QA CLI，禁止静默降级或把 CLI 结果冒充 MCP 已验证。
+
+验证边界：MCP 单元/合约测试、STDIO fake smoke 与 HTTP 回归都不能证明 live Neo4j；live Neo4j 只有配置 `NEO4J_TEST_URI`、`NEO4J_TEST_USER`、`NEO4J_TEST_PASSWORD` 并实际运行集成测试后才能声称已验证。Skill 对 `drawing-graph-qa` 的 MCP 工具依赖声明当前为宿主兼容性待办（Task 40），未验证前不宣称依赖发现已通过。
+
+首版不实现 Streamable HTTP MCP、远程监听、多 worker、OAuth、RBAC、TLS 或插件发布；不提供任何写回、候选复核、候选提升或任意 Cypher 工具。
+
+## 10. HTTP API（第二阶段）
 
 `src/drawing_graph/qa_http.py` 与 `scripts\serve_drawing_graph_qa.py` 提供版本化、默认本机监听、默认只读的 HTTP adapter。调用链固定为 `HTTP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`；HTTP 路由只构造 `QARequest` 并调用 `DrawingGraphQAService.ask()`，不直接访问 facade、repository、Cypher 或 Neo4j。
 
@@ -289,7 +324,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/v1/drawing-qa/ask 
 - `GET /health/ready` 返回 `neo4j_status="not_checked"`：进程存活或 runtime 已装配**不等于 live Neo4j 验证**；live Neo4j 只有配置 disposable 测试库并实际运行集成测试后才能声称已验证。
 - 请求体超限返回 413、并发上限返回 429、等待超时返回 504；错误消息经共享脱敏，不返回 traceback、URI、密码、token 或底层类名。
 
-## 10. 测试命令
+## 11. 测试命令
 
 333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收已记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。该记录使用 `road-full-20260807-acceptance` 前缀保留验收数据，便于 Neo4j Browser 复查；真实密码未写入仓库文件。
 
@@ -336,7 +371,7 @@ python -m unittest tests.integration.test_neo4j_semantic_evidence -v
 
 集成测试会初始化 Schema、导入样例页面、验证重复导入幂等性、基础导入不写 `Table -[:HAS_CAPTION]-> TableCaption`、离线派生关系增强幂等性、表格标题 legacy 兼容、`USES_BASIC_INFO`、`CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK`、`HAS_SECTION_MARK` 写入和查询闭环，并验证语义证据层 live Neo4j 闭环：`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`、`HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`、`CANDIDATE_MATCHES_SECTION_CAPTION`、`MATCHES_SECTION_CAPTION` 的真实写入、幂等和查询投影，同时确认不创建 `RecognitionRun` 图谱节点。测试结束后会清理本轮测试数据。
 
-## 11. 常见错误
+## 12. 常见错误
 
 - `DRAWING_GRAPH_DATA_ROOT is required`：缺少必需环境变量，按第 2 节设置后重试。
 - `DRAWING_GRAPH_BATCH_SIZE must be a positive integer`：批量大小不是正整数。

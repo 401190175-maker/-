@@ -76,5 +76,52 @@ class ReadmeTest(unittest.TestCase):
         self.assertIn("<test-password>", self.readme)
 
 
+class ReadmeMcpTest(unittest.TestCase):
+    """Task 42: README must document the local read-only MCP adapter."""
+
+    def setUp(self):
+        self.readme = README_PATH.read_text(encoding="utf-8")
+
+    def test_documents_mcp_stdio_entry_and_stable_server_name(self):
+        for phrase in ("serve_drawing_graph_mcp.py", "drawing-graph-qa", "STDIO"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+    def test_lists_all_six_readonly_tools(self):
+        for tool_name in (
+            "ask_drawing_page",
+            "ask_drawing_block",
+            "list_drawing_candidates",
+            "get_section_match_status",
+            "get_table_caption_status",
+            "get_drawing_diagnostics",
+        ):
+            with self.subTest(tool=tool_name):
+                self.assertIn(tool_name, self.readme)
+
+    def test_documents_readonly_and_protocol_boundaries(self):
+        for phrase in (
+            "write_back=false",
+            "stdout 只承载 MCP 协议帧",
+            "stderr",
+            "DRAWING_GRAPH_QA_MCP_LOG_LEVEL",
+            "DrawingGraphQAService",
+            "不调用 HTTP API 或 QA CLI",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+    def test_documents_verification_and_unimplemented_boundaries(self):
+        for phrase in (
+            "live Neo4j",
+            "未验证",
+            "Streamable HTTP",
+            "未实现",
+            "透明降级",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+
 if __name__ == "__main__":
     unittest.main()
