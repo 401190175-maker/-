@@ -37,7 +37,7 @@ python -m pip install -r requirements.txt
 导入配置全部来自环境变量，数据库密码不会写入代码、文档或日志。
 
 ```powershell
-$env:DRAWING_GRAPH_DATA_ROOT = "C:\Users\40119\Desktop\图块图谱构建\data"
+$env:DRAWING_GRAPH_DATA_ROOT = "<your-data-root>"
 $env:DRAWING_GRAPH_PROJECT_SLUG = "road-project"
 $env:NEO4J_URI = "bolt://127.0.0.1:7687"
 $env:NEO4J_USER = "neo4j"
