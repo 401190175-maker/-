@@ -1101,4 +1101,10 @@
 
 ### Task 50：disposable Neo4j MCP 集成验证
 
-- 状态：未执行；live Neo4j 未验证。
+- 状态：执行完成，退出码 0；4 个集成测试全部跳过，live Neo4j 未验证。
+- 执行时间：2026-08-11。
+- 执行命令：`$env:PYTHONPATH='src'; python -m unittest discover tests.integration -v`
+- 运行结果：`Ran 4 tests in 0.000s`，`OK (skipped=4)`。
+- 跳过原因：`NEO4J_TEST_URI`、`NEO4J_TEST_USER`、`NEO4J_TEST_PASSWORD` 未配置；`test_neo4j_import`、`test_neo4j_relation_enrichment`、`test_neo4j_semantic_evidence` 与新增 `test_qa_mcp_integration` 均按设计跳过。
+- 数据安全说明：未连接任何真实或 disposable 数据库；未创建、修改或删除测试数据；无凭据写入仓库文件。
+- 结论：MCP live Neo4j 集成验证未执行，不得记录为 passed；只有三个 `NEO4J_TEST_*` 指向 disposable 测试库并实际运行通过后才能标记 live verified。
