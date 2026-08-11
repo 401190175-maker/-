@@ -233,5 +233,146 @@ def inspect_parameters(func):
     return tuple(inspect.signature(func).parameters)
 
 
+class QAMcpCliFailureTests(unittest.TestCase):
+    """main() must fail safely with sanitized stderr and clean stdout."""
+
+    def _runtime(self, close_error=None):
+        class FakeRuntime:
+            def __init__(self):
+                self.service = object()
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+                if close_error is not None:
+                    raise close_error
+
+        return FakeRuntime()
+
+    def test_config_failure_returns_nonzero_and_sanitizes_stderr(self):
+        module = _load_script()
+
+        def config_loader():
+            raise RuntimeError("bolt://user:secret@host:7687 traceback detail")
+
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            code = module.main(config_loader=config_loader)
+
+        self.assertEqual(2, code)
+        self.assertEqual("", stdout.getvalue())
+        self.assertNotIn("secret", stderr.getvalue())
+        self.assertNotIn("bolt://", stderr.getvalue())
+        self.assertNotIn("traceback", stderr.getvalue())
+
+    def test_runtime_factory_failure_returns_nonzero(self):
+        module = _load_script()
+
+        def runtime_factory(config):
+            raise RuntimeError("runtime assembly failed")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = module.main(
+                config_loader=lambda: object(),
+                runtime_factory=runtime_factory,
+            )
+
+        self.assertEqual(2, code)
+        self.assertIn("runtime assembly failed", stderr.getvalue())
+
+    def test_transport_failure_closes_runtime_and_returns_nonzero(self):
+        module = _load_script()
+        runtime = self._runtime()
+
+        def transport_runner(server):
+            raise RuntimeError("transport loop failed")
+
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            code = module.main(
+                config_loader=lambda: object(),
+                runtime_factory=lambda config: runtime,
+                tools_factory=lambda service: object(),
+                server_factory=lambda tools: object(),
+                transport_runner=transport_runner,
+            )
+
+        self.assertEqual(3, code)
+        self.assertEqual(1, runtime.close_calls)
+        self.assertEqual("", stdout.getvalue())
+        self.assertIn("transport failed", stderr.getvalue())
+        self.assertIn("transport loop failed", stderr.getvalue())
+
+    def test_transport_failure_message_is_sanitized(self):
+        module = _load_script()
+        runtime = self._runtime()
+
+        def transport_runner(server):
+            raise RuntimeError("bolt://user:secret@host:7687 traceback detail")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = module.main(
+                config_loader=lambda: object(),
+                runtime_factory=lambda config: runtime,
+                tools_factory=lambda service: object(),
+                server_factory=lambda tools: object(),
+                transport_runner=transport_runner,
+            )
+
+        self.assertEqual(3, code)
+        self.assertNotIn("secret", stderr.getvalue())
+        self.assertNotIn("bolt://", stderr.getvalue())
+        self.assertNotIn("traceback", stderr.getvalue())
+
+    def test_close_failure_does_not_mask_transport_failure(self):
+        module = _load_script()
+        runtime = self._runtime(
+            close_error=RuntimeError("close bolt://user:secret@host:7687")
+        )
+
+        def transport_runner(server):
+            raise RuntimeError("transport failed first")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = module.main(
+                config_loader=lambda: object(),
+                runtime_factory=lambda config: runtime,
+                tools_factory=lambda service: object(),
+                server_factory=lambda tools: object(),
+                transport_runner=transport_runner,
+            )
+
+        self.assertEqual(3, code)
+        self.assertEqual(1, runtime.close_calls)
+        self.assertIn("transport failed", stderr.getvalue())
+        self.assertIn("close failed", stderr.getvalue())
+        self.assertNotIn("secret", stderr.getvalue())
+        self.assertNotIn("bolt://", stderr.getvalue())
+
+    def test_close_failure_alone_returns_nonzero(self):
+        module = _load_script()
+        runtime = self._runtime(close_error=RuntimeError("close failed"))
+
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            code = module.main(
+                config_loader=lambda: object(),
+                runtime_factory=lambda config: runtime,
+                tools_factory=lambda service: object(),
+                server_factory=lambda tools: object(),
+                transport_runner=lambda server: None,
+            )
+
+        self.assertEqual(4, code)
+        self.assertEqual("", stdout.getvalue())
+        self.assertIn("close failed", stderr.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

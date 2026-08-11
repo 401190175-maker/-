@@ -57,11 +57,21 @@ def main(
         print("startup failed: " + message, file=sys.stderr)
         return 2
     runner = transport_runner or _run_stdio_transport
+    exit_code = 0
     try:
         runner(server)
-    finally:
+    except Exception as error:
+        exit_code = 3
+        message = sanitize_error_message(str(error)) or error.__class__.__name__
+        print("transport failed: " + message, file=sys.stderr)
+    try:
         runtime.close()
-    return 0
+    except Exception as error:
+        if exit_code == 0:
+            exit_code = 4
+        message = sanitize_error_message(str(error)) or error.__class__.__name__
+        print("close failed: " + message, file=sys.stderr)
+    return exit_code
 
 
 def _run_stdio_transport(server: Any) -> None:
