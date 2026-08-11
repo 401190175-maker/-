@@ -85,15 +85,19 @@ class QAMcpCliImportTests(unittest.TestCase):
             events.append("server")
             return object()
 
+        def transport_runner(server):
+            events.append("transport")
+
         code = module.main(
             config_loader=config_loader,
             runtime_factory=runtime_factory,
             tools_factory=tools_factory,
             server_factory=server_factory,
+            transport_runner=transport_runner,
         )
 
         self.assertEqual(0, code)
-        self.assertEqual(["config", "runtime", "tools", "server"], events)
+        self.assertEqual(["config", "runtime", "tools", "server", "transport"], events)
         self.assertEqual(1, runtime.close_calls)
 
     def test_config_failure_returns_nonzero_and_sanitizes_stderr(self):
@@ -156,6 +160,77 @@ class QAMcpCliImportTests(unittest.TestCase):
         self.assertNotIn("argparse", imports)
         self.assertNotIn("uvicorn", imports)
         self.assertNotIn("sys.argv", source)
+
+
+class QAMcpCliLifecycleTests(unittest.TestCase):
+    """main() must run STDIO transport and close the runtime exactly once."""
+
+    def test_main_runs_transport_and_closes_runtime_once(self):
+        module = _load_script()
+
+        class FakeRuntime:
+            def __init__(self):
+                self.service = object()
+                self.close_calls = 0
+
+            def close(self):
+                self.close_calls += 1
+
+        runtime = FakeRuntime()
+        events = []
+
+        def transport_runner(server):
+            events.append("transport")
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = module.main(
+                config_loader=lambda: object(),
+                runtime_factory=lambda config: runtime,
+                tools_factory=lambda service: object(),
+                server_factory=lambda tools: object(),
+                transport_runner=transport_runner,
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual(["transport"], events)
+        self.assertEqual(1, runtime.close_calls)
+        self.assertEqual("", stdout.getvalue())
+        self.assertEqual("", stderr.getvalue())
+
+    def test_default_transport_runner_is_official_stdio(self):
+        import ast
+
+        module = _load_script()
+
+        self.assertTrue(callable(module._run_stdio_transport))
+        source = Path("scripts/serve_drawing_graph_mcp.py").read_text(encoding="utf-8")
+        self.assertIn("stdio_server", source)
+        self.assertIn("InitializationOptions", source)
+        tree = ast.parse(source)
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module)
+        self.assertNotIn("uvicorn", imports)
+        self.assertNotIn("fastapi", imports)
+
+    def test_transport_is_injected_fake_and_never_starts_http(self):
+        module = _load_script()
+
+        self.assertNotIn("workers", inspect_parameters(module.main))
+        self.assertNotIn("host", inspect_parameters(module.main))
+        self.assertNotIn("port", inspect_parameters(module.main))
+        self.assertNotIn("token", inspect_parameters(module.main))
+
+
+def inspect_parameters(func):
+    import inspect
+
+    return tuple(inspect.signature(func).parameters)
 
 
 if __name__ == "__main__":
