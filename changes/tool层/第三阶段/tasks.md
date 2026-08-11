@@ -1062,6 +1062,19 @@
 - 回退动作：`git mv` 将 Skill 恢复回 `.codex/skills/drawing-graph-operator/`，移除临时空 `.agents` 目录；恢复后 `git status` 无 Skill 文件差异，`tests/test_skill_docs.py` 全量通过。
 - 结论：`.codex/skills/drawing-graph-operator` 保持唯一权威路径；`.agents/skills` 迁移需在宿主重启验证、`.gitignore` 策略确认后单独立项，不影响 MCP 核心交付。
 
+### Task 40：Skill 声明 MCP 工具依赖
+
+- 状态：按回退条款保留无依赖 metadata；宿主兼容性未验证，不伪造成功状态。
+- 执行时间：2026-08-11。
+- 执行内容：
+  1. 读取 skill-creator 的 `references/openai_yaml.md` 与 `scripts/generate_openai_yaml.py`，确认官方字段仅支持 `dependencies.tools[].{type, value, description, transport, url}`；`value` 是 MCP server 标识，不支持在同一 entry 内声明六个精确 tool name。
+  2. 检查本机已安装插件/Skill 的 `agents/openai.yaml` 实际实例：`dependencies.tools` 均用于 streamable_http + url（如 neon、openaiDeveloperDocs），未发现 stdio 依赖声明先例；`quick_validate.py` 只校验 `SKILL.md` frontmatter，不解析 `agents/openai.yaml`。
+  3. 官方 Codex Skills/MCP 文档页面本次不可达（HTTP 403），无法由官方 schema 确认 `transport: "stdio"` 且无 `url` 的声明在当前宿主可被接受并触发依赖发现。
+  4. 当前 Codex 会话未配置 `drawing-graph-qa` MCP server；本机系统 Python 与捆绑 Python 均缺少 `yaml` 模块，无法运行宿主侧 schema 校验脚本。
+  5. 按 design 5.6 与 Task 40 完成标准中的回退条款：保留 `.codex/skills/drawing-graph-operator/agents/openai.yaml` 为无依赖的有效 interface-only metadata；不添加未经宿主验证的 `dependencies` 声明。
+- 等价静态检查：openai.yaml 结构有效（仅顶层 `interface:`）、无本机绝对路径、无凭据值、无写回/导入/增强/复核/提升工具名；`tests/test_skill_docs.py` 新增 `DrawingGraphSkillMcpDependencyTests` 独立测试通过。
+- 结论：`drawing-graph-qa` 依赖发现未验证；待宿主支持按 tool name 声明或确认 stdio server 依赖可被发现后，再单独立项补充 `dependencies.tools`，不影响 MCP 核心交付。
+
 ### Task 47：第三阶段全量单元回归
 
 - 状态：未执行。

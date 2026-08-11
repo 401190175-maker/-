@@ -400,5 +400,58 @@ class DrawingGraphSkillSingleAuthorityTests(unittest.TestCase):
                 self.assertTrue((SKILL_DIR / name).is_file(), f"missing in {SKILL_DIR}: {name}")
 
 
+class DrawingGraphSkillMcpDependencyTests(unittest.TestCase):
+    """Task 40: openai.yaml must not fabricate unverified MCP dependencies."""
+
+    METADATA = "agents/openai.yaml"
+    TASKS = PROJECT_ROOT / "changes" / "tool层" / "第三阶段" / "tasks.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.METADATA
+        self.text = self.path.read_text(encoding="utf-8")
+        self.tasks_text = self.TASKS.read_text(encoding="utf-8")
+
+    def test_openai_yaml_has_valid_interface_metadata(self):
+        for field in ("interface:", "display_name", "short_description", "default_prompt"):
+            with self.subTest(field=field):
+                self.assertIn(field, self.text)
+
+    def test_openai_yaml_top_level_keys_are_limited_to_interface(self):
+        # 回退条款：宿主未验证依赖发现时，不得伪造 dependencies 声明。
+        top_level = [line for line in self.text.splitlines() if line and not line.startswith(" ")]
+        self.assertEqual(["interface:"], top_level)
+        self.assertNotIn('type: "mcp"', self.text)
+
+    def test_openai_yaml_has_no_local_paths_or_secrets(self):
+        self.assertNotIn("C:\\Users", self.text)
+        self.assertNotIn("sk-", self.text)
+        for pattern in (
+            re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+            re.compile(r"token\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+            re.compile(r"NEO4J_[A-Z_]+\s*[:=]\s*['\"][^'\"]{2,}['\"]"),
+        ):
+            with self.subTest(pattern=pattern.pattern):
+                self.assertIsNone(pattern.search(self.text), pattern.pattern)
+
+    def test_openai_yaml_has_no_write_import_or_review_tool_names(self):
+        for phrase in (
+            "write_back=true",
+            "import_drawing",
+            "enrich_",
+            "review_candidate",
+            "promote_candidate",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertNotIn(phrase, self.text)
+
+    def test_task40_compatibility_record_is_documented(self):
+        marker = "### Task 40：Skill 声明 MCP 工具依赖"
+        self.assertIn(marker, self.tasks_text)
+        record = self.tasks_text[self.tasks_text.rfind(marker):]
+        for phrase in ("兼容性", "未验证", "不伪造"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, record)
+
+
 if __name__ == "__main__":
     unittest.main()
