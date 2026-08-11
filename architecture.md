@@ -205,7 +205,7 @@ JSON 文件
 | `README.md` | 面向使用者的操作说明，覆盖环境变量、Schema 初始化、基础导入、离线派生关系增强、查询验证、测试和常见错误。 |
 | `architecture.md` | 本文件，描述整体架构、模块划分、数据流和关键设计边界。 |
 | `Module.md` | 面向维护者的模块记录，按新模块职责、新接口、新依赖、数据变化和架构变化同步当前代码实现。 |
-| `requirements.txt` | Python 运行依赖，目前用于 Neo4j Python Driver。 |
+| `requirements.txt` | Python 运行依赖：Neo4j Python Driver、FastAPI、Uvicorn、HTTPX，以及第三阶段官方 MCP Python SDK（`mcp>=1.29.0,<2.0`）。 |
 
 ### 5.2 数据目录
 
@@ -224,6 +224,10 @@ JSON 文件
 | `scripts/import_json.py` | 基础导入 CLI，支持 `all`、`drawing-set`、`page` 三种模式；只负责参数解析、配置加载、仓储创建和服务调用。 |
 | `scripts/enrich_block_relations.py` | 离线派生关系增强 CLI，支持 `project`、`drawing-set`、`page` 三种范围；只负责参数解析、配置加载、增强范围创建和服务调用，不自动运行 AI 候选复核。 |
 | `scripts/review_candidate_relations.py` | 候选关系 AI 复核 CLI，显式复核一个完整候选组，输出 `review_run_id`、复核状态和候选提升结果。 |
+| `scripts/drawing_graph_tool.py` | 薄 CLI adapter：从环境变量读取 Neo4j 配置，创建 driver 后调用 `DrawingGraphToolFacade` 并输出 JSON；不保存密码、不写 Cypher。 |
+| `scripts/drawing_graph_qa.py` | QA 问答 CLI：创建 driver/facade 后调用 `DrawingGraphQAService.ask()`，支持 JSON 与简短中文输出。 |
+| `scripts/serve_drawing_graph_qa.py` | 单 worker Uvicorn 启动入口：只从环境变量读取 `QAHttpConfig` 并启动 `create_app()`。 |
+| `scripts/serve_drawing_graph_mcp.py` | 本地 STDIO MCP 启动入口：加载 `QAMcpConfig`、装配 runtime/tools/server 并运行 STDIO transport；stdout 只承载协议帧。 |
 
 ### 5.4 Python 包入口
 
@@ -235,7 +239,7 @@ JSON 文件
 
 | 文件 | 作用 |
 |---|---|
-| `src/drawing_graph/config.py` | 定义 `ImportConfig` 和 `ConfigError`；从环境变量读取数据根目录、项目标识、Neo4j 连接信息、批量大小和日志级别；`repr` 中屏蔽密码。 |
+| `src/drawing_graph/config.py` | 定义 `ImportConfig`、`QAHttpConfig`、`QAMcpConfig` 和 `ConfigError`；分别从环境变量读取导入、HTTP、MCP 所需配置；`repr` 中屏蔽密码。 |
 
 ### 5.6 数据扫描与校验模块
 
@@ -404,7 +408,7 @@ JSON 文件
 
 - 不做 OCR。
 - 不做全量自动语义扫描，不默认调用真实外部多模态模型供应商。
-- 不实现 Agent Skill。
+- 不把项目级 Codex Skill 发布为独立 Agent Skill 插件或公共插件市场条目。
 - 项目级 Codex Skill `.codex/skills/drawing-graph-operator/` 只是 facade 外侧的操作层，不属于 Agent Skill、MCP Tool adapter、HTTP/REST API 或文件 watcher。
 - 不提供 HTTP 写回、任意 Cypher HTTP 接口或远程 MCP；HTTP 只读 QA 与本地只读 MCP Tool adapter 已实现（STDIO）。
 - 不生成或推断 `block_type`。

@@ -346,6 +346,13 @@ python -m unittest tests.test_relation_readme -v
 python -m unittest tests.test_skill_docs -v
 ```
 
+运行第三阶段 MCP/Skill 文档合同与路由行为测试：
+
+```powershell
+python -m unittest tests.test_qa_mcp_docs -v
+python -m unittest tests.test_qa_mcp_skill_behavior -v
+```
+
 运行全部测试发现命令：
 
 ```powershell

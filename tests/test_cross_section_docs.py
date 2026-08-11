@@ -28,7 +28,10 @@ class CrossSectionDocsTest(unittest.TestCase):
         self.assertIn("`CANDIDATE_MATCHES_SECTION_CAPTION`", self.architecture)
         self.assertIn("只有在双方存在可比较 `TextObservation`", self.architecture)
         self.assertIn("不做 OCR", self.architecture)
-        self.assertIn("不实现 Agent Skill", self.architecture)
+        self.assertIn(
+            "不把项目级 Codex Skill 发布为独立 Agent Skill 插件或公共插件市场条目",
+            self.architecture,
+        )
         self.assertIn("不提供 HTTP 写回、任意 Cypher HTTP 接口或远程 MCP", self.architecture)
         self.assertIn("本地只读 MCP Tool adapter 已实现", self.architecture)
         self.assertIn("不建立 `NEAR` 空间关系网络", self.architecture)
