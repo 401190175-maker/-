@@ -24,7 +24,9 @@
 
 ```text
 Codex Skill
-  -> DrawingGraphToolFacade / scripts/drawing_graph_tool.py
+  -> MCP QA 工具（drawing-graph-qa）或受控 QA CLI（scripts/drawing_graph_qa.py）
+  -> DrawingGraphQAService
+  -> DrawingGraphToolFacade
   -> query / source-fact read port
   -> semantic service / run log / semantic repository
   -> candidate review service
@@ -40,15 +42,16 @@ Codex Skill
 
 ## 3. 当前包含与不包含范围
 
-当前已实现的能力包括：基础导入闭环、离线派生关系增强闭环、候选关系复核骨架、语义证据层（`TextObservation`、三类 `Interpretation`、图谱外 `RecognitionRun` 日志、稳定查询投影）和 facade 只读/语义/候选查询。当前不包含：
+当前已实现的能力包括：基础导入闭环、离线派生关系增强闭环、候选关系复核骨架、语义证据层（`TextObservation`、三类 `Interpretation`、图谱外 `RecognitionRun` 日志、稳定查询投影）、facade 只读/语义/候选查询、QA 问答 CLI、只读 HTTP API 和本地只读 MCP adapter（STDIO，`drawing-graph-qa`）。当前不包含：
 
-- Agent Skill（本项目尚未把 facade 封装为 Agent Skill）
-- MCP Tool adapter
-- HTTP/REST API
+- 远程 MCP 或 Streamable HTTP MCP
+- MCP 写回
 - 文件 watcher 或自动导入触发器
 - 全量自动语义扫描
-- 默认真实云多模态模型调用（保留 fake/client protocol 与显式配置边界）
+- OCR
+- 默认真实云多模态模型调用（保留 fake/client protocol 与显式配置边界；云模型供应商接入未实现）
 - 设置或推断 `DrawingBlock.block_type` 的自动能力
+- 把项目 Skill 发布为独立 Agent Skill 插件或公共插件市场条目
 
 ## 4. 语义证据边界
 

@@ -453,5 +453,62 @@ class DrawingGraphSkillMcpDependencyTests(unittest.TestCase):
                 self.assertIn(phrase, record)
 
 
+class DrawingGraphSkillProjectBoundaryTests(unittest.TestCase):
+    """project-boundaries.md must list current and not-implemented capabilities."""
+
+    REFERENCE = "references/project-boundaries.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.REFERENCE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_reference_exists(self):
+        self.assertTrue(self.path.is_file(), f"missing skill file: {self.path}")
+
+    def test_current_capabilities_include_skill_cli_http_and_mcp(self):
+        for phrase in (
+            "Skill",
+            "QA CLI",
+            "HTTP",
+            "本地只读 MCP",
+            "已实现",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_dependency_direction_goes_through_mcp_or_cli_to_qaservice(self):
+        for phrase in (
+            "Skill",
+            "MCP",
+            "QA CLI",
+            "DrawingGraphQAService",
+            "DrawingGraphToolFacade",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_unimplemented_capabilities_remain_explicit(self):
+        for phrase in (
+            "远程 MCP",
+            "MCP 写回",
+            "云模型",
+            "OCR",
+            "文件 watcher",
+            "全量自动语义扫描",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_writeback_and_fact_boundaries_are_unchanged(self):
+        for phrase in (
+            "write_back=false",
+            "候选关系不是正式事实",
+            "来源事实",
+            "禁止直接写 Cypher",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
