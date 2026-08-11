@@ -91,5 +91,71 @@ class SkillDocsTest(unittest.TestCase):
                 self.assertNotIn(phrase, self.all_docs)
 
 
+class DrawingGraphSkillQaWorkflowTests(unittest.TestCase):
+    """qa-workflows.md must map six intents to MCP tools and QA types."""
+
+    REFERENCE = "references/qa-workflows.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.REFERENCE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_reference_exists(self):
+        self.assertTrue(self.path.is_file(), f"missing skill file: {self.path}")
+
+    def test_six_tools_and_question_types_are_mapped(self):
+        expected = {
+            "ask_drawing_page": "page_summary",
+            "ask_drawing_block": "block_relations",
+            "list_drawing_candidates": "candidate_relations",
+            "get_section_match_status": "section_matches",
+            "get_table_caption_status": "table_caption_status",
+            "get_drawing_diagnostics": "diagnostic_status",
+        }
+        for tool_name, question_type in expected.items():
+            with self.subTest(tool=tool_name):
+                self.assertIn(tool_name, self.text)
+                self.assertIn(question_type, self.text)
+
+    def test_required_ids_and_mutually_exclusive_scopes_are_documented(self):
+        for phrase in (
+            "page_id",
+            "block_id",
+            "cross_section_id",
+            "table_caption_id",
+            "互斥",
+            "只能提供一个",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_multi_intent_and_missing_id_rules_are_documented(self):
+        for phrase in (
+            "拆分",
+            "缺少",
+            "询问用户",
+            "不猜测",
+            "不扩大到全库",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_partial_results_cannot_be_merged_into_formal_conclusion(self):
+        self.assertIn("partial", self.text)
+        self.assertIn("不能拼接", self.text)
+
+    def test_reference_does_not_contain_code_secrets_or_cypher(self):
+        import re
+
+        self.assertNotIn("```python", self.text)
+        self.assertNotIn("sk-", self.text)
+        for pattern in (
+            re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+            re.compile(r"token\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+            re.compile(r"api[_-]?key\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+        ):
+            self.assertIsNone(pattern.search(self.text), pattern.pattern)
+
+
 if __name__ == "__main__":
     unittest.main()
