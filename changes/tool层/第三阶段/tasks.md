@@ -1087,7 +1087,17 @@
 
 ### Task 48：真实 STDIO MCP smoke test
 
-- 状态：未执行。
+- 状态：执行完成，退出码 0；STDIO 握手、六工具发现、成功/错误调用、正常关闭均通过。
+- 执行时间：2026-08-11。
+- 执行方式：官方 `mcp.client.stdio.stdio_client` + `ClientSession` 以子进程方式启动 `scripts/serve_drawing_graph_mcp.py` 的 fake-runtime 包装入口（临时 UTF-8 runner，未新增仓库文件）。
+- 验证内容：
+  1. initialize 成功；`tools/list` 恰好发现六个工具。
+  2. `ask_drawing_page` 返回 `isError=false`，structuredContent.status=ok、contract_version=`drawing-qa-mcp-v1`、tool_name 正确，TextContent 同源包含摘要。
+  3. `list_drawing_candidates` 双 ID 输入返回 `isError=true` + `invalid_argument`。
+  4. fake service 注入 `bolt://user:SMOKE_SECRET_9f8a@host:7687` 异常时返回 `internal_error`；stderr 只含脱敏日志和 call ID，不含 secret/traceback；runtime 只关闭一次（`fake-runtime-close-calls=1`）。
+  5. stdout 无协议外文本（协议帧由官方 client 消费并成功解析）。
+- 发现并修复：smoke 首次执行发现未预期异常时 `logger.exception()` 会把含原始异常的完整 traceback 写入 stderr（泄漏注入的 secret），已改为 `logger.error()` 仅记录脱敏消息和 call ID，并新增单测断言日志不含 secret/traceback。
+- 结论：STDIO fake smoke 通过；使用 fake runtime，不能证明 live Neo4j 查询通过。
 
 ### Task 50：disposable Neo4j MCP 集成验证
 
