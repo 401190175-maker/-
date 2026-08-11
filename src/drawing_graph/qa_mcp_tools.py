@@ -216,7 +216,9 @@ def _map_unexpected_error(
 ) -> McpQAFailure:
     """Return a fixed safe error and keep detailed diagnostics on stderr only."""
 
-    logger.exception(
+    # 只记录脱敏消息与 call ID；不携带 exc_info，避免把含凭据/URI 的原始
+    # traceback 写进 stderr（设计要求 stderr 不输出 stack trace 和 secret）。
+    logger.error(
         "MCP tool %s call_id=%s failed: %s",
         tool_name,
         call_id,

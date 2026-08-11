@@ -211,6 +211,11 @@ class McpErrorMappingTests(unittest.TestCase):
         self.assertNotIn("traceback", outcome.error.message)
         self.assertTrue(outcome.meta.call_id)
         self.assertIn(outcome.meta.call_id, "".join(logs.output))
+        log_text = "".join(logs.output)
+        self.assertNotIn("secret", log_text)
+        self.assertNotIn("bolt://", log_text)
+        self.assertNotIn("Traceback", log_text)
+        self.assertNotIn("traceback", log_text)
 
     def test_qa_error_message_is_sanitized(self):
         from drawing_graph.qa_mcp_tools import map_qa_error_to_failure
