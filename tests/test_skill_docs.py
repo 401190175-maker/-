@@ -285,5 +285,47 @@ class DrawingGraphSkillMcpOutputTests(unittest.TestCase):
                 self.assertIn(phrase, self.text)
 
 
+class DrawingGraphSkillMcpVerificationTests(unittest.TestCase):
+    """verification.md must keep MCP/STDIO/Skill/HTTP/live evidence separate."""
+
+    REFERENCE = "references/verification.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.REFERENCE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_validation_layers_are_separately_defined(self):
+        for phrase in (
+            "MCP in-memory",
+            "STDIO smoke",
+            "Skill 发现",
+            "HTTP 回归",
+            "live Neo4j",
+            "模型/工具单元测试",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_fake_runtime_and_smoke_cannot_prove_live_neo4j(self):
+        for phrase in (
+            "fake runtime",
+            "HTTP health",
+            "STDIO smoke",
+            "不能证明 live Neo4j",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_skipped_remains_live_neo4j_unverified(self):
+        for phrase in ("skipped", "未验证", "不等于"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_skill_validation_uses_authoritative_path(self):
+        self.assertIn("quick_validate.py", self.text)
+        self.assertIn(".codex", self.text)
+        self.assertIn("drawing-graph-operator", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
