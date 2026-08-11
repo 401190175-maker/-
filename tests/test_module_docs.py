@@ -49,5 +49,63 @@ class ModuleDocsTest(unittest.TestCase):
         self.assertIn("Module.md", self.readme)
 
 
+class ModuleMcpDocsTest(unittest.TestCase):
+    """Task 43: Module.md must record MCP module responsibilities."""
+
+    def setUp(self):
+        self.module_doc = (ROOT / "Module.md").read_text(encoding="utf-8")
+
+    def test_records_all_five_mcp_files(self):
+        for path in (
+            "src/drawing_graph/qa_mcp_models.py",
+            "src/drawing_graph/qa_mcp_tools.py",
+            "src/drawing_graph/qa_mcp_runtime.py",
+            "src/drawing_graph/qa_mcp_server.py",
+            "scripts/serve_drawing_graph_mcp.py",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, self.module_doc)
+
+    def test_records_six_readonly_tool_names(self):
+        for tool_name in (
+            "ask_drawing_page",
+            "ask_drawing_block",
+            "list_drawing_candidates",
+            "get_section_match_status",
+            "get_table_caption_status",
+            "get_drawing_diagnostics",
+        ):
+            with self.subTest(tool=tool_name):
+                self.assertIn(tool_name, self.module_doc)
+
+    def test_records_mcp_dependency_direction_and_sdk(self):
+        for phrase in (
+            "MCP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade",
+            "mcp>=1.29.0,<2.0",
+            "不改变 Neo4j 数据模型",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.module_doc)
+
+    def test_records_skill_mcp_division_and_authoritative_path(self):
+        for phrase in (
+            ".codex/skills/drawing-graph-operator",
+            "操作策略层",
+            "Skill 与 MCP 分工",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.module_doc)
+
+    def test_does_not_claim_unimplemented_mcp_capabilities(self):
+        for phrase in (
+            "首版不实现 Streamable HTTP",
+            "远程认证",
+            "写回",
+            "plugin 发布",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.module_doc)
+
+
 if __name__ == "__main__":
     unittest.main()
