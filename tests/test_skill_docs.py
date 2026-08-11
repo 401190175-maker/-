@@ -327,5 +327,37 @@ class DrawingGraphSkillMcpVerificationTests(unittest.TestCase):
         self.assertIn("drawing-graph-operator", self.text)
 
 
+class DrawingGraphSkillEntryTests(unittest.TestCase):
+    """SKILL.md must prefer MCP QA tools and route to new references."""
+
+    FILE = "SKILL.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.FILE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_core_workflow_still_reads_docs_first(self):
+        self.assertIn("先读当前文件", self.text)
+        self.assertIn("README.md", self.text)
+
+    def test_mcp_qa_tools_are_preferred(self):
+        for phrase in ("MCP QA 工具", "优先选择", "MCP 优先"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_fallback_routes_through_mcp_boundaries_reference(self):
+        for phrase in ("mcp-boundaries.md", "QA CLI", "透明降级", "静默降级"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_reference_table_includes_new_routing_files(self):
+        for phrase in ("qa-workflows.md", "mcp-boundaries.md", "渐进披露"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_skill_remains_an_operation_strategy_layer(self):
+        self.assertIn("操作策略层", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
