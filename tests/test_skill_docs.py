@@ -157,5 +157,75 @@ class DrawingGraphSkillQaWorkflowTests(unittest.TestCase):
             self.assertIsNone(pattern.search(self.text), pattern.pattern)
 
 
+class DrawingGraphSkillMcpBoundaryTests(unittest.TestCase):
+    """mcp-boundaries.md must define safe fallback and read-only boundaries."""
+
+    REFERENCE = "references/mcp-boundaries.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.REFERENCE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_reference_exists(self):
+        self.assertTrue(self.path.is_file(), f"missing skill file: {self.path}")
+
+    def test_mcp_first_and_transparent_fallback_rules(self):
+        for phrase in (
+            "MCP 优先",
+            "QA CLI",
+            "透明降级",
+            "禁止静默降级",
+            "说明 MCP 未成功使用",
+            "验证状态",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_skill_must_not_create_driver_or_execute_cypher(self):
+        for phrase in (
+            "不创建 driver",
+            "不执行 Cypher",
+            "repository 写回",
+            "facade 单项写回",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_timeout_and_cancel_do_not_expand_scope(self):
+        for phrase in (
+            "超时",
+            "取消",
+            "不自动扩大范围",
+            "不自动触发其他工具",
+            "不自动写回",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_reference_lists_six_tools_and_keeps_read_only(self):
+        for tool_name in (
+            "ask_drawing_page",
+            "ask_drawing_block",
+            "list_drawing_candidates",
+            "get_section_match_status",
+            "get_table_caption_status",
+            "get_drawing_diagnostics",
+        ):
+            with self.subTest(tool=tool_name):
+                self.assertIn(tool_name, self.text)
+        self.assertIn("write_back=false", self.text)
+
+    def test_reference_has_no_code_or_secret_values(self):
+        import re
+
+        self.assertNotIn("```python", self.text)
+        self.assertNotIn("sk-", self.text)
+        for pattern in (
+            re.compile(r"password\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+            re.compile(r"token\s*[:=]\s*['\"][^'\"]{4,}['\"]", re.IGNORECASE),
+        ):
+            self.assertIsNone(pattern.search(self.text), pattern.pattern)
+
+
 if __name__ == "__main__":
     unittest.main()
