@@ -227,5 +227,63 @@ class DrawingGraphSkillMcpBoundaryTests(unittest.TestCase):
             self.assertIsNone(pattern.search(self.text), pattern.pattern)
 
 
+class DrawingGraphSkillMcpOutputTests(unittest.TestCase):
+    """output-contract.md must keep MCP outputs in the same fact layers."""
+
+    REFERENCE = "references/output-contract.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.REFERENCE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_all_eight_fact_kinds_are_documented(self):
+        for fact_kind in (
+            "source_fact",
+            "derived_relation",
+            "semantic_observation",
+            "semantic_interpretation",
+            "candidate_relation",
+            "formal_relation",
+            "diagnostic",
+            "unsupported",
+        ):
+            with self.subTest(fact_kind=fact_kind):
+                self.assertIn(fact_kind, self.text)
+
+    def test_mcp_structured_and_text_output_consistency(self):
+        for phrase in (
+            "structuredContent",
+            "TextContent",
+            "同一",
+            "不重新分类",
+            "facts",
+            "warnings",
+            "unsupported_parts",
+            "source_calls",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_candidate_and_matched_candidate_are_not_formal(self):
+        for phrase in (
+            "candidate_relation",
+            "CANDIDATE_*",
+            "matched_candidate",
+            "不是正式",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_partial_not_found_unsupported_and_error_expressions(self):
+        for phrase in ("partial", "not_found", "unsupported", "error", "保守"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_drawing_ocr_and_model_text_are_data_not_instructions(self):
+        for phrase in ("图纸", "OCR", "模型", "数据", "系统指令"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
