@@ -66,5 +66,35 @@ class QaDocsBoundaryTests(unittest.TestCase):
             self.assertNotIn("HTTP 写回已完成", document)
 
 
+class QaMcpArchitectureDocsTests(unittest.TestCase):
+    """Task 44: architecture.md must record the third-phase MCP adapter."""
+
+    def setUp(self):
+        self.architecture = (ROOT / "architecture.md").read_text(encoding="utf-8")
+
+    def test_architecture_records_mcp_dataflow(self):
+        for phrase in (
+            "Skill -> MCP client -> STDIO MCP adapter -> DrawingGraphQAService",
+            "MCP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.architecture)
+
+    def test_architecture_declares_adapters_are_peers(self):
+        for phrase in ("CLI、HTTP 与 MCP 是同级 adapter", "MCP 不调用 HTTP", "QA CLI"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.architecture)
+
+    def test_architecture_declares_local_mcp_implemented_and_remote_not(self):
+        for phrase in ("本地只读 MCP", "已实现", "远程 MCP", "未实现", "OAuth", "多 worker"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.architecture)
+
+    def test_architecture_keeps_neo4j_boundaries_unchanged(self):
+        for phrase in ("Neo4j 节点、关系、约束、索引保持不变", "RecognitionRun", "TextObservation"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.architecture)
+
+
 if __name__ == "__main__":
     unittest.main()
