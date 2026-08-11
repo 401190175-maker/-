@@ -1077,7 +1077,13 @@
 
 ### Task 47：第三阶段全量单元回归
 
-- 状态：未执行。
+- 状态：执行完成，退出码 0；1031 个测试通过，0 失败，3 个跳过（live Neo4j 未验证）。
+- 执行时间：2026-08-11。
+- 执行命令：`$env:PYTHONPATH='src'; python -m unittest discover tests -v`
+- 运行结果：`Ran 1031 tests in 5.451s`，`OK (skipped=3)`。
+- 跳过原因：`NEO4J_TEST_URI`、`NEO4J_TEST_USER`、`NEO4J_TEST_PASSWORD` 未配置，`tests/integration/test_neo4j_import.py`、`tests/integration/test_neo4j_relation_enrichment.py`、`tests/integration/test_neo4j_semantic_evidence.py` 三个真实 Neo4j 集成测试按设计跳过。
+- 回归说明：第一、二阶段 QA/CLI/HTTP 测试继续通过；MCP/Skill 文档合同测试通过。首次全量运行时发现 `tests/test_cross_section_docs.py` 仍断言旧措辞“不提供 MCP Tool adapter”，已同步为“不提供远程 MCP、本地只读 MCP Tool adapter 已实现”后重新通过。
+- 结论：单元回归通过；live Neo4j 未验证，skipped 不计入 passed。
 
 ### Task 48：真实 STDIO MCP smoke test
 
