@@ -84,6 +84,16 @@ def _build_parser() -> argparse.ArgumentParser:
     block_relations = subparsers.add_parser("block-relations", help="Return relations for one DrawingBlock.")
     block_relations.add_argument("--block-id", required=True)
 
+    recognition = subparsers.add_parser(
+        "recognize-page-semantics",
+        help="Run controlled single-page semantic recognition through the facade.",
+    )
+    recognition.add_argument("--page-id", required=True)
+    recognition.add_argument("--target-type", action="append", dest="target_types")
+    recognition.add_argument("--model-profile", default="default")
+    recognition.add_argument("--prompt-version", default="default")
+    recognition.add_argument("--write-back", action="store_true")
+
     observations = subparsers.add_parser("list-text-observations", help="Query persisted TextObservation evidence.")
     _add_semantic_filters(observations)
     observations.add_argument("--status", action="append", dest="statuses")
@@ -141,6 +151,16 @@ def _run_selected_command(facade: Any, args: argparse.Namespace) -> Any:
         return facade.get_block_trace(args.block_id)
     if args.command == "block-relations":
         return facade.get_block_relations(args.block_id)
+    if args.command == "recognize-page-semantics":
+        # Recognition is intentionally routed through the facade so dry-run and
+        # write-back boundaries stay in one application-level place.
+        return facade.recognize_page_semantics(
+            args.page_id,
+            target_types=tuple(args.target_types) if args.target_types else (),
+            model_profile=args.model_profile,
+            prompt_version=args.prompt_version,
+            write_back=args.write_back,
+        )
     if args.command == "list-text-observations":
         return facade.list_text_observations(
             page_id=args.page_id,

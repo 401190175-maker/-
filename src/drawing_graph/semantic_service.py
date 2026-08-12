@@ -14,7 +14,7 @@ from .semantic_models import (
     TableInterpretation,
     TextObservation,
 )
-from .tool_models import PageSourceFacts, ToolModelError
+from .tool_models import BBox, PageSourceFacts, SemanticTargetInput, ToolModelError
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,87 @@ class SemanticRecognitionService:
         prompt_version: str = "default",
         write_back: bool = False,
     ) -> SemanticRecognitionResult:
+        """按页面元素批量识别，兼容旧入口；内部转为精确目标路径。"""
+
+        targets = tuple(
+            SemanticTargetInput(
+                target_id=f"target:{element.element_id}",
+                page_id=page_facts.page_id,
+                target_element_id=element.element_id,
+                target_type=element.element_type,
+                task_type="text_observation",
+                required_outputs=("observation",),
+                bbox=element.bbox,
+                normalized_bbox=element.normalized_bbox,
+                output_contract_version="1",
+            )
+            for element in page_facts.elements
+            if not target_types or element.element_type in set(target_types)
+        )
+        if not targets:
+            return SemanticRecognitionResult(
+                recognition_run_id=f"run:temp:{uuid4()}",
+                status="succeeded",
+                observations=(),
+                persisted=False,
+                error_summary=None,
+                interpretations=(),
+            )
+        return self.recognize_targets(
+            page_facts=page_facts,
+            targets=targets,
+            model_profile=model_profile,
+            prompt_version=prompt_version,
+            contract_version="1",
+            write_back=write_back,
+        )
+
+    def recognize_targets(
+        self,
+        page_facts: PageSourceFacts,
+        targets: tuple[SemanticTargetInput, ...],
+        model_profile: str = "default",
+        prompt_version: str = "default",
+        contract_version: str = "1",
+        write_back: bool = False,
+    ) -> SemanticRecognitionResult:
+        """按精确目标识别：供应商调用前二次缓存校验，命中不建持久化 run log。"""
+
+        if not isinstance(targets, tuple) or not targets:
+            raise ToolModelError("INVALID_ARGUMENT", "targets must be a non-empty tuple")
+        for target in targets:
+            if not isinstance(target, SemanticTargetInput):
+                raise ToolModelError(
+                    "INVALID_ARGUMENT",
+                    "targets must contain only SemanticTargetInput",
+                )
+            if target.page_id != page_facts.page_id:
+                raise ToolModelError(
+                    "INVALID_ARGUMENT",
+                    "target page_id must match page facts",
+                )
+        (
+            cached_observations,
+            cached_interpretations,
+            pending_targets,
+            image_inputs,
+            cache_keys,
+        ) = self._partition_targets(
+            page_facts,
+            targets,
+            model_profile,
+            prompt_version,
+            contract_version,
+        )
+        if not pending_targets:
+            return SemanticRecognitionResult(
+                recognition_run_id=f"run:temp:{uuid4()}",
+                status="succeeded",
+                observations=tuple(cached_observations),
+                persisted=False,
+                error_summary=None,
+                interpretations=tuple(cached_interpretations),
+            )
         run_id = f"run:temp:{uuid4()}"
         run_summary = None
         if write_back:
@@ -65,8 +146,10 @@ class SemanticRecognitionService:
                 prompt_version=prompt_version,
                 input_refs={
                     "page_id": page_facts.page_id,
-                    "target_types": tuple(target_types),
-                    "element_ids": tuple(element.element_id for element in page_facts.elements),
+                    "target_ids": tuple(target.target_id for target in targets),
+                    "element_ids": tuple(
+                        target.target_element_id for target in targets
+                    ),
                 },
                 write_back=True,
             )
@@ -79,9 +162,11 @@ class SemanticRecognitionService:
                 model_name,
                 model_version,
                 error_message,
-            ) = self._recognize_with_cache(
+            ) = self._recognize_pending(
                 page_facts=page_facts,
-                target_types=target_types,
+                pending_targets=pending_targets,
+                image_inputs=image_inputs,
+                cache_keys=cache_keys,
                 model_profile=model_profile,
                 prompt_version=prompt_version,
                 run_id=run_id,
@@ -118,50 +203,42 @@ class SemanticRecognitionService:
             interpretations=interpretations,
         )
 
-    def _recognize_with_cache(
+    def _partition_targets(
         self,
-        *,
         page_facts: PageSourceFacts,
-        target_types: tuple[str, ...],
+        targets: tuple[SemanticTargetInput, ...],
         model_profile: str,
         prompt_version: str,
-        run_id: str,
+        contract_version: str,
     ):
-        targets = tuple(
-            (element.element_id, element.element_type, element.bbox, element.normalized_bbox)
-            for element in page_facts.elements
-            if not target_types or element.element_type in set(target_types)
-        )
-        image_inputs = {}
-        cache_keys = {}
-        for element_id in tuple(target[0] for target in targets):
-            image_input = None
-            if self.input_builder is not None:
-                image_input = self.input_builder.build_input(page_facts, element_id)
-            image_inputs[element_id] = image_input
-            if image_input is not None and self.cache_service is not None:
-                cache_keys[element_id] = build_semantic_cache_key(
-                    SemanticCacheKeyInput(
-                        image_hash=image_input.image_hash,
-                        bbox=image_input.bbox,
-                        target_element_id=element_id,
-                        task_type="text_observation",
-                        model_profile=model_profile,
-                        model_version=getattr(self.client, "model_version", "unknown"),
-                        prompt_version=prompt_version,
-                        preprocessing_version="preprocess-v1",
-                        normalization_rule_version="normalize-v1",
-                        contract_version="1",
-                    )
-                )
+        """按目标 cache key 划分缓存命中与待识别目标，不做外部调用。"""
+
         cached_observations: list[TextObservation] = []
         cached_interpretations: list[
             BlockInterpretation | BasicInfoInterpretation | TableInterpretation
         ] = []
-        pending_targets = []
+        pending_targets: list[SemanticTargetInput] = []
+        image_inputs = {}
+        cache_keys = {}
         for target in targets:
-            cache_key = cache_keys.get(target[0])
-            cached = self.cache_service.get(cache_key) if cache_key is not None else None
+            element_id = target.target_element_id
+            image_input = self._image_input(page_facts, element_id)
+            image_inputs[element_id] = image_input
+            cache_key = self._build_cache_key(
+                page_facts,
+                element_id,
+                model_profile,
+                prompt_version,
+                task_type=target.task_type,
+                contract_version=contract_version,
+                image_input=image_input,
+            )
+            cache_keys[element_id] = cache_key
+            cached = (
+                self.cache_service.get(cache_key)
+                if cache_key is not None and self.cache_service is not None
+                else None
+            )
             if cached is not None:
                 for item in cached:
                     if isinstance(item, TextObservation):
@@ -170,33 +247,74 @@ class SemanticRecognitionService:
                         cached_interpretations.append(item)
             else:
                 pending_targets.append(target)
-        if not pending_targets:
-            return (
-                tuple(cached_observations),
-                tuple(cached_interpretations),
-                "succeeded",
-                getattr(self.client, "model_name", None),
-                getattr(self.client, "model_version", None),
-                None,
+        return (
+            cached_observations,
+            cached_interpretations,
+            pending_targets,
+            image_inputs,
+            cache_keys,
+        )
+
+    def _recognize_pending(
+        self,
+        *,
+        page_facts: PageSourceFacts,
+        pending_targets: tuple[SemanticTargetInput, ...],
+        image_inputs,
+        cache_keys,
+        model_profile: str,
+        prompt_version: str,
+        run_id: str,
+    ):
+        """只对未命中目标调用供应商，并把新证据写入缓存。"""
+
+        refs = tuple(
+            (
+                target.target_element_id,
+                target.target_type,
+                target.bbox,
+                target.normalized_bbox,
+            )
+            for target in pending_targets
+            if (
+                target.target_element_id is not None
+                and target.bbox is not None
+                and target.normalized_bbox is not None
+            )
+        )
+        if not refs:
+            raise ToolModelError(
+                "INVALID_ARGUMENT",
+                "pending targets require element id and bboxes",
             )
         result = self.client.recognize(
             RecognitionClientRequest(
                 page_id=page_facts.page_id,
                 image_path=page_facts.image_path or "unknown",
-                targets=tuple(pending_targets),
+                targets=refs,
                 model_profile=model_profile,
                 prompt_version=prompt_version,
+                target_inputs=tuple(pending_targets),
             )
         )
         try:
             observations = tuple(
-                _observation(item, page_facts, run_id, model_profile, prompt_version, image_inputs, cache_keys)
+                _observation(
+                    item,
+                    page_facts,
+                    run_id,
+                    model_profile,
+                    prompt_version,
+                    image_inputs,
+                    cache_keys,
+                )
                 for item in result.observations
             )
             interpretations = tuple(
                 interpretation
                 for item in result.interpretations
-                if (interpretation := _interpretation(item, page_facts, run_id)) is not None
+                if (interpretation := _interpretation(item, page_facts, run_id))
+                is not None
             )
         except ToolModelError as exc:
             raise ToolModelError("RECOGNITION_FAILED", "recognition output failed validation") from exc
@@ -216,6 +334,47 @@ class SemanticRecognitionService:
             result.model_name,
             result.model_version,
             result.error_message,
+        )
+
+    def _image_input(self, page_facts: PageSourceFacts, element_id: str):
+        """构建图片输入，缺 builder 时返回 None。"""
+
+        if self.input_builder is None:
+            return None
+        return self.input_builder.build_input(page_facts, element_id)
+
+    def _build_cache_key(
+        self,
+        page_facts: PageSourceFacts,
+        element_id: str,
+        model_profile: str,
+        prompt_version: str,
+        *,
+        task_type: str = "text_observation",
+        contract_version: str = "1",
+        image_input=None,
+    ) -> str | None:
+        """按统一 SemanticCacheKeyInput 构造与 03 目标一致的 cache key。"""
+
+        if self.cache_service is None:
+            return None
+        if image_input is None:
+            image_input = self._image_input(page_facts, element_id)
+        if image_input is None:
+            return None
+        return build_semantic_cache_key(
+            SemanticCacheKeyInput(
+                image_hash=image_input.image_hash,
+                bbox=image_input.bbox,
+                target_element_id=element_id,
+                task_type=task_type,
+                model_profile=model_profile,
+                model_version=getattr(self.client, "model_version", "unknown"),
+                prompt_version=prompt_version,
+                preprocessing_version="preprocess-v1",
+                normalization_rule_version="normalize-v1",
+                contract_version=contract_version,
+            )
         )
 
 

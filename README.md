@@ -224,11 +224,14 @@ driver.close()
 python scripts\drawing_graph_tool.py list-drawing-sets --project-id project:road-project --limit 10
 python scripts\drawing_graph_tool.py list-pages --drawing-set-id set:road-project:lslq_yhd_2_1 --limit 5
 python scripts\drawing_graph_tool.py block-trace --block-id block:road-project:lslq_yhd_2_1:road_24:<shape_hash>
+python scripts\drawing_graph_tool.py recognize-page-semantics --page-id page:road-project:lslq_yhd_2_1:road_24 --target-type DrawingBlock --model-profile qwen3-vl-plus --prompt-version qwen-vision-v1
 python scripts\drawing_graph_tool.py list-text-observations --page-id page:road-project:lslq_yhd_2_1:road_24 --status confirmed
 python scripts\drawing_graph_tool.py list-interpretations --page-id page:road-project:lslq_yhd_2_1:road_24 --status partial
 python scripts\drawing_graph_tool.py list-candidate-relations --block-id block:road-project:lslq_yhd_2_1:road_24:<shape_hash> --relation-type candidate_section_mark --status candidate
 python scripts\drawing_graph_tool.py list-section-matches --cross-section-id element:road-project:lslq_yhd_2_1:road_24:<shape_hash> --status candidate --status confirmed
 ```
+
+`recognize-page-semantics` 默认 `write_back=false`，只返回本次临时 `recognition_run_id`、observation 和 interpretation；只有显式传入 `--write-back` 才会通过 facade 进入受控语义证据写回流程。使用 Qwen 时需要当前进程已配置 `DRAWING_GRAPH_RECOGNITION_PROVIDER=qwen` 和 `DASHSCOPE_API_KEY`，命令参数和输出不会包含真实 API key。
 
 Tool facade 的单元测试不需要真实 Neo4j 或真实云模型。真实 Neo4j 集成测试必须单独配置 disposable 测试库环境变量 `NEO4J_TEST_URI`、`NEO4J_TEST_USER` 和 `NEO4J_TEST_PASSWORD`；如果这些测试被跳过，跳过不等于通过，不能声称 live Neo4j 已验证。
 
@@ -248,7 +251,7 @@ python scripts\drawing_graph_qa.py ask-block --block-id block:road-project:lslq_
 python scripts\drawing_graph_qa.py ask-candidates --page-id page:road-project:lslq_yhd_2_1:road_24 --format json
 ```
 
-输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。HTTP API 见第 10 节，本地只读 MCP adapter 见第 9 节；Ava 专有 adapter、OCR、真实模型供应商和数据库 schema 变更仍未实现。
+输出支持 JSON（默认）和简短中文（`--format zh-brief`）。QA CLI 与底层 `scripts\drawing_graph_tool.py` 一样只做参数解析、facade 创建和输出渲染；业务编排在 `src/drawing_graph/qa_service.py`。HTTP API 见第 10 节，本地只读 MCP adapter 见第 9 节；当前已提供可选 Qwen/DashScope 多模态客户端，但不默认调用，live DashScope 验证需单独执行；Ava 专有 adapter、OCR 和数据库 schema 变更仍未实现。
 
 ## 9. MCP 只读工具（第三阶段）
 
@@ -388,3 +391,51 @@ python -m unittest tests.integration.test_neo4j_semantic_evidence -v
 - 查询为空：先用批次状态确认导入是否成功，再检查 `project_slug`、图纸册目录名、页面文件名和 shape hash 是否一致。
 - `--rule-version` 缺失：离线派生关系增强必须显式声明规则版本后再运行。
 - 增强后仍是 `not_enhanced`：确认基础页面级图谱已经导入，且输入的 `project_id`、`drawing_set_id`、`page_id` 或 `block_id` 与稳定业务 ID 一致。
+
+## 13. 产品公共合同与通用检索闭环（产品实现层）
+
+`src/drawing_graph/assistant_models.py`、`assistant_retrieval_planner.py`、`assistant_retrieval_executor.py`、`assistant_retrieval_projection.py`、`assistant_retrieval_service.py` 与 `assistant_qa_mapping.py` 组成产品实现层的公共合同与只读通用检索闭环：`QuestionUnderstandingResult -> EvidenceRequirement[] -> RetrievalPlan -> DrawingGraphToolFacade 白名单只读调用 -> RetrievalBundle`。该闭环是 Python 内部 API，入口为 `GraphRetrievalService.retrieve()`；`assistant_qa_mapping.py` 只做 `QARequest -> QuestionUnderstandingResult` 的单向兼容映射，不修改 `DrawingGraphQAService` 行为。
+
+边界：通用检索默认只读，`write_back=false`；不调用 Qwen；不创建 RecognitionRun；不写 Neo4j；不审核或提升候选关系；候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系。完整 DrawingAssistantService 尚未实现；外部产品级 CLI/HTTP/MCP 入口尚未实现，当前没有产品级写回入口。
+
+### 13.1 问题理解闭环（产品实现层 01，已实现）
+
+`assistant_question_text.py`、`assistant_scope_resolution.py`、`assistant_question_rules.py`、`assistant_intent_splitter.py`、`assistant_evidence_templates.py`、`assistant_clarification.py`、`assistant_question_trace.py`、`assistant_question_llm.py`（协议与 fake，不默认真实模型）与 `assistant_question_understanding.py` 组成 01 问题理解闭环：`AssistantRequest -> QuestionUnderstandingService -> QuestionUnderstandingResult -> GraphRetrievalService -> RetrievalBundle`。首版采用规则优先的确定性中文路由；scope 缺失/冲突、指代不唯一或问题类型歧义时返回 `clarification_required` 结构化澄清；不支持时返回 `unknown_or_unsupported`；`QuestionUnderstandingModelClient` 只作为受约束适配口保留，fake 客户端与输出校验已实现，默认不调用真实文本模型。
+
+问题理解模块不访问 Neo4j、不调用 `DrawingGraphToolFacade`、不创建 RecognitionRun、不写数据库；`write_back=false` 不会被问题文本提升。专项测试见 `tests/test_assistant_question_*.py` 与 `tests/test_assistant_question_security.py`；未运行 live Neo4j 或 live 模型时，不报告 live 验证通过。
+
+验证方式（均为单元/合同测试，不连接真实 Neo4j，也不调用真实云模型）：
+
+```powershell
+python -m unittest tests.test_assistant_docs -v
+python -m unittest tests.test_assistant_models_contract -v
+python -m unittest tests.test_assistant_retrieval_planner -v
+python -m unittest tests.test_assistant_retrieval_executor -v
+python -m unittest tests.test_assistant_retrieval_projection -v
+python -m unittest tests.test_assistant_retrieval_service -v
+python -m unittest tests.test_assistant_qa_mapping -v
+python -m unittest tests.test_assistant_retrieval_boundaries -v
+```
+
+未配置 `NEO4J_TEST_URI`、`NEO4J_TEST_USER`、`NEO4J_TEST_PASSWORD` 时，集成测试会 skipped；这种 skipped live 测试不等于通过，跳过不等于 live Neo4j 通过，不能声称 live Neo4j 已验证。
+
+### 13.2 语义缺口决策闭环（产品实现层 03，首阶段已实现）
+
+`assistant_evidence_sufficiency.py`、`assistant_evidence_freshness.py`、`assistant_recognition_target_planner.py`、`assistant_recognition_budget.py` 与 `assistant_semantic_gap_decision.py` 组成语义缺口决策闭环：`QuestionUnderstandingResult + RetrievalBundle + RecognitionPolicy -> SemanticGapDecisionService -> SemanticGapDecision`。它回答“证据是否足够、缓存是否可复用、是否允许识别、识别哪些最小目标、哪些目标被预算/时延/scope 延后”，位于检索之后、语义识别执行之前。
+
+边界：03 是纯决策层，不调用模型、不写缓存、不写 Neo4j、不创建 RecognitionRun、不提升候选关系；默认 `write_back=false`，`write_back_recommendation` 只是建议，不能修改授权。`candidate` 与 `matched_candidate` 不等于 formal，语义观察不能满足解释需求，来源事实不能被模型输出覆盖。执行衔接（`DrawingGraphToolFacade.recognize_semantic_targets` 与 `SemanticRecognitionService.recognize_targets`）已预留：执行前按统一 cache key 二次校验，缓存命中不调用供应商、不创建持久化 run log。完整 `DrawingAssistantService`、证据融合、答案生成、反馈状态机与产品级 adapter 仍属后续范围。
+
+验证方式（单元/合同/静态边界测试，不连接真实 Neo4j，也不调用真实云模型）：
+
+```powershell
+python -m unittest tests.test_assistant_semantic_gap_models -v
+python -m unittest tests.test_assistant_evidence_sufficiency -v
+python -m unittest tests.test_assistant_evidence_freshness -v
+python -m unittest tests.test_assistant_recognition_target_planner -v
+python -m unittest tests.test_assistant_recognition_budget -v
+python -m unittest tests.test_assistant_semantic_gap_decision -v
+python -m unittest tests.test_assistant_semantic_gap_boundaries -v
+python -m unittest tests.test_assistant_semantic_gap_docs -v
+```
+
+未配置 live DashScope 或 live Neo4j 时，不报告 live 验证通过；skipped live 测试不等于 live 通过。

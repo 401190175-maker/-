@@ -18,6 +18,7 @@ from .tool_models import (
     PageSummary,
     SectionMatchSummary,
     SemanticPayloadSummary,
+    SemanticTargetInput,
     ToolModelError,
 )
 
@@ -111,6 +112,54 @@ class DrawingGraphToolFacade:
                 target_types=target_types,
                 model_profile=model_profile,
                 prompt_version=prompt_version,
+                write_back=write_back,
+            )
+        except ToolModelError:
+            raise
+        except Exception as exc:
+            raise ToolModelError("RECOGNITION_FAILED", "semantic recognition failed") from exc
+
+    def recognize_semantic_targets(
+        self,
+        targets: tuple[SemanticTargetInput, ...],
+        model_profile: str = "default",
+        prompt_version: str = "default",
+        contract_version: str = "1",
+        write_back: bool = False,
+    ) -> SemanticRecognitionResult:
+        """执行精确识别目标（预留入口），默认 ``write_back=false``。"""
+
+        if self.semantic_service is None:
+            raise ToolModelError(
+                "RECOGNITION_FAILED",
+                "semantic recognition service is not configured",
+            )
+        if (
+            not isinstance(targets, tuple)
+            or not targets
+            or not all(isinstance(target, SemanticTargetInput) for target in targets)
+        ):
+            raise ToolModelError(
+                "INVALID_ARGUMENT",
+                "targets must be a non-empty tuple of SemanticTargetInput",
+            )
+        page_ids = {target.page_id for target in targets}
+        if len(page_ids) != 1:
+            raise ToolModelError(
+                "INVALID_ARGUMENT",
+                "all targets must belong to one page",
+            )
+        page_id = next(iter(page_ids))
+        page_facts = self.get_page_source_facts(page_id)
+        if page_facts is None:
+            raise ToolModelError("NOT_FOUND", "page source facts were not found")
+        try:
+            return self.semantic_service.recognize_targets(
+                page_facts=page_facts,
+                targets=targets,
+                model_profile=model_profile,
+                prompt_version=prompt_version,
+                contract_version=contract_version,
                 write_back=write_back,
             )
         except ToolModelError:

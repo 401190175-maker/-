@@ -1,3 +1,4 @@
+import dataclasses
 import unittest
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ from drawing_graph.tool_models import (
     SemanticInterpretationSummary,
     SemanticObservationSummary,
     SemanticPayloadSummary,
+    SemanticTargetInput,
     ToolError,
     ToolModelError,
 )
@@ -212,6 +214,69 @@ class ToolModelsTest(unittest.TestCase):
                 content_hash="hash:1",
                 contract_version="1",
                 payload=[1, 2, 3],
+            )
+
+
+class SemanticTargetInputTests(unittest.TestCase):
+    def test_target_input_carries_page_element_bbox_task_and_outputs(self):
+        target = SemanticTargetInput(
+            target_id="target:1",
+            page_id="page:1",
+            target_element_id="element:1",
+            target_type="DrawingBlock",
+            task_type="text_observation",
+            required_outputs=("observation",),
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            context_element_ids=("element:2",),
+            output_contract_version="1",
+        )
+        self.assertEqual("target:1", target.target_id)
+        self.assertEqual("page:1", target.page_id)
+        self.assertEqual("element:1", target.target_element_id)
+        self.assertEqual("text_observation", target.task_type)
+        self.assertEqual(("observation",), target.required_outputs)
+        self.assertEqual(("element:2",), target.context_element_ids)
+        self.assertEqual("1", target.output_contract_version)
+
+    def test_target_input_serializes_without_product_decision_fields(self):
+        target = SemanticTargetInput(
+            target_id="target:2",
+            page_id="page:1",
+            target_type="page",
+            task_type="page_summary",
+            output_contract_version="1",
+        )
+        serialized = dataclasses.asdict(target)
+        self.assertEqual("page:1", serialized["page_id"])
+        self.assertNotIn("decision", serialized)
+        self.assertNotIn("budget_exceeded", serialized)
+        self.assertNotIn("answer_status", serialized)
+        self.assertNotIn("covered_requirement_ids", serialized)
+
+    def test_target_input_rejects_empty_ids_and_invalid_bbox(self):
+        with self.assertRaises(ToolModelError):
+            SemanticTargetInput(
+                target_id="",
+                page_id="page:1",
+                target_type="page",
+                task_type="t",
+            )
+        with self.assertRaises(ToolModelError):
+            SemanticTargetInput(
+                target_id="target:3",
+                page_id="page:1",
+                target_type="page",
+                task_type="t",
+                bbox=(1, 2, 3, 4),
+            )
+        with self.assertRaises(ToolModelError):
+            SemanticTargetInput(
+                target_id="target:4",
+                page_id="page:1",
+                target_type="page",
+                task_type="t",
+                required_outputs=("",),
             )
 
 

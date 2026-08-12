@@ -13,6 +13,7 @@
 - `src/drawing_graph/tool_facade.py`：实现 `DrawingGraphToolFacade`，作为后续 Tool adapter 或 Skill 前面的应用门面；它统一 `write_back=false` 默认策略、dry-run 识别、只读查询、候选关系查询和候选审核写回入口。
 - `src/drawing_graph/semantic_models.py`：定义 `TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`、`RecognitionRunSummary` 和语义状态。`RecognitionRun` 图谱外，`TextObservation` 图谱内，三类 `Interpretation` 同样图谱内，二者仅通过 `recognition_run_id` 关联。
 - `src/drawing_graph/semantic_client.py`：定义多模态识别客户端协议和 fake client；当前不默认调用真实外部模型供应商。
+- `src/drawing_graph/qwen_semantic_client.py`：实现可选 Qwen/DashScope 多模态识别客户端，使用 OpenAI-compatible chat completions 接口，API key 只从环境变量读取，不进入 facade 请求、命令参数或输出。
 - `src/drawing_graph/semantic_service.py`：编排按需语义识别、图像输入构造、缓存复用和写回。`write_back=false` 时返回 dry-run 临时结果，`write_back=true` 时才写入 run log 和 semantic repository；识别失败会记录 failed run。
 - `src/drawing_graph/recognition_run_log.py`：定义图谱外 `RecognitionRun` 日志 port 和内存实现，支持 `recognition`、`interpretation`、`candidate_review` 三类 run。
 - `src/drawing_graph/semantic_repository.py`：定义 `TextObservation` 与三类 `Interpretation` 的语义证据 repository port、受控断面匹配读写 port，并提供内存实现。
@@ -41,6 +42,26 @@
 - `src/drawing_graph/qa_mcp_runtime.py`：实现 `QAMcpRuntime` 与 `create_qa_mcp_runtime(config, ...)`，管理 driver、`DrawingGraphToolFacade`、`DrawingGraphQAService` 的装配、失败清理和幂等关闭；支持 fake factory 注入。
 - `src/drawing_graph/qa_mcp_server.py`：实现无 import 副作用的 `create_mcp_server(tools)`，配置 `drawing-graph-qa` server instructions、六个工具 Schema 和只读 annotations；只提供 Tools capability。
 - `scripts/serve_drawing_graph_mcp.py`：本地 STDIO MCP 唯一进程入口；`main()` 负责加载 `QAMcpConfig`、装配 runtime/tools/server、运行官方 STDIO transport，stdout 只承载协议帧；不接受 host、port、worker、HTTP token 或远程 transport 参数。
+- `src/drawing_graph/assistant_models.py`：产品公共合同模块，定义 `AssistantRequest`、`AssistantScope`、`QuestionUnderstandingResult`、`AssistantSubrequest`、`EvidenceRequirement`、`RetrievalPlan/RetrievalStep`、`SourceCallRecord`、`EvidenceItem`、`EvidenceRef`、`MissingEvidence`、`RetrievalBundle`、`RawRetrievalResult`、`AnswerPackage`、`Claim`、`Citation`、`TraceRecord`、`FeedbackEvent` 与稳定枚举/原因码；默认只读、`write_back=false`，不依赖数据库驱动/仓储/HTTP/MCP/Qwen。
+- `src/drawing_graph/assistant_retrieval_planner.py`：`RetrievalPlanner.plan()` 校验 scope，把 `EvidenceRequirement` 映射为 facade 白名单只读步骤，并做同请求去重、payload 默认关闭和 limit 上限；只做规划，不访问 facade。
+- `src/drawing_graph/assistant_retrieval_executor.py`：`RetrievalExecutor.execute()` 只调用 facade 白名单只读方法，记录 `SourceCallRecord`，同一 `dedupe_key` 只执行一次；把异常映射为稳定原因码并脱敏，不调用识别、审核或写回能力。
+- `src/drawing_graph/assistant_retrieval_projection.py`：`RetrievalBundleBuilder.build()` 把 facade DTO 归一化为 `EvidenceItem` 并按事实层级放入 `RetrievalBundle`，汇总 `missing_evidence`、warning 与整体状态。
+- `src/drawing_graph/assistant_retrieval_service.py`：`GraphRetrievalService.retrieve()` 串联 planner、executor、bundle builder，是通用检索闭环的唯一产品层入口。
+- `src/drawing_graph/assistant_qa_mapping.py`：`qa_request_to_question_result()` 把六类固定 `QARequest` 单向映射为 `QuestionUnderstandingResult` 与 `EvidenceRequirement`；不修改 `DrawingGraphQAService` 行为，QAService 不反向依赖产品模块。
+- `src/drawing_graph/assistant_question_text.py`：`QuestionTextNormalizer.normalize()` 去首尾空白、统一全角标点、折叠重复空白，保留大小写敏感业务 ID；空输入直接报错。
+- `src/drawing_graph/assistant_scope_resolution.py`：`ScopeResolver.resolve()` 提取 `page:/block:/element:/cross_section:/table:/table_caption:/claim:` 稳定 ID，合并 `scope_hint` 并在有限对话上下文中消解“这张图/这个图块”；冲突与指代不唯一返回稳定原因码，不访问图谱。
+- `src/drawing_graph/assistant_question_rules.py`：`RuleQuestionRouter.route()` 用“关键词组合 + 排除词”做确定性中文路由；无命中返回 `unknown_or_unsupported`，多命中返回 `clarification_required` + `ambiguous_question_type`。
+- `src/drawing_graph/assistant_intent_splitter.py`：`IntentSplitter.split()` 把明确列举式/连接式多意图拆分为稳定 `AssistantSubrequest`，不确定时保留 `multi_intent_ambiguous`，不丢弃子问题。
+- `src/drawing_graph/assistant_evidence_templates.py`：`EvidenceRequirementFactory.build()` 按 `question_type + scope` 生成只读 `EvidenceRequirement`；`allow_model_generation` 只在语义解释类需求中为 true，且不触发模型调用。
+- `src/drawing_graph/assistant_clarification.py`：`ClarificationPolicy.evaluate()` 根据 scope 缺失/冲突、指代不唯一和问题类型歧义生成 `ClarificationDecision` 与 `ClarificationItem`。
+- `src/drawing_graph/assistant_question_trace.py`：`QuestionUnderstandingTraceBuilder.build_event()` 生成可放入 `TraceRecord.module_events` 的 `QuestionUnderstandingEvent`，details 自动脱敏。
+- `src/drawing_graph/assistant_question_llm.py`：`QuestionUnderstandingModelClient` 协议、`FakeQuestionUnderstandingModelClient` 与 `validate_model_output()`；只返回受约束候选，非法输出返回 `model_output_invalid`，不读取密钥、不发起网络请求。
+- `src/drawing_graph/assistant_question_understanding.py`：`QuestionUnderstandingService.understand()` 编排规范化、scope 解析、规则路由、多意图拆分、证据需求与澄清策略，输出 `QuestionUnderstandingResult`。
+- `src/drawing_graph/assistant_evidence_sufficiency.py`：`EvidenceSufficiencyEvaluator.evaluate()` 逐需求评估充分性，实现 scope 匹配、fact kind 层级门控、formal gate、状态/冲突判断与模型生成许可。
+- `src/drawing_graph/assistant_evidence_freshness.py`：`EvidenceFreshnessEvaluator.evaluate()` 判断图片/bbox/模型/prompt/预处理/规范化/合同 freshness，`cache_candidates()` 复用 `semantic_cache.build_semantic_cache_key()` 输出 `CacheCandidate`；只读，不写缓存。
+- `src/drawing_graph/assistant_recognition_target_planner.py`：`RecognitionTargetPlanner.plan()` 从 `RetrievalBundle` 来源事实定位并生成最小 `RecognitionTarget`，支持合并去重、稳定排序与缺定位 blocked。
+- `src/drawing_graph/assistant_recognition_budget.py`：`RecognitionCostProfile`/`RecognitionEstimator` 提供保守估算，`RecognitionBudgetEvaluator.evaluate()` 执行授权、max targets、预算与时延硬门控。
+- `src/drawing_graph/assistant_semantic_gap_decision.py`：`SemanticGapDecisionService.decide()` 校验输入并编排充分性、freshness/cache、目标规划与预算门控，输出唯一 `SemanticGapDecision`。
 
 既有模块仍保持原职责：`src/drawing_graph/block_relation_enrichment.py` 负责离线派生关系计算，`src/drawing_graph/relation_repository.py` 负责受控关系写入、候选提升、候选关系读取、断面匹配读取和 `RelationRepositorySectionMatchPort` 适配，`src/drawing_graph/relation_service.py` 负责编排显式离线增强，`src/drawing_graph/candidate_review.py` 保留 `CandidateReviewService.review_candidate_group`、三态审核和硬规则。`scripts/review_candidate_relations.py` 仍是显式候选关系 AI 复核 CLI 入口；复核记录使用 `review_run_id` 回查一次复核运行。
 
@@ -60,7 +81,7 @@
 - `DrawingGraphToolFacade.list_candidate_relations(page_id=None, block_id=None, relation_type=None, status=None)`：只读查看候选关系，候选关系不是正式事实。
 - `DrawingGraphToolFacade.review_candidate_relation(...)`：显式审核候选关系；`write_back=false` 只返回 dry-run 结果，`write_back=true` 才通过 `CandidateReviewService` 和硬规则写回。
 - `create_neo4j_tool_facade(driver, source_fact_reader=None, config=None)`：用调用方提供的 Neo4j driver 创建真实端口装配的 facade；它不接收 Neo4j URI、用户、密码或供应商密钥，连接生命周期仍由调用方管理。
-- `scripts\drawing_graph_tool.py list-drawing-sets|list-pages|page-source-facts|block-trace|block-relations|list-text-observations|list-interpretations|list-candidate-relations|list-section-matches`：当前已落地的 CLI 调用入口，参数映射到 facade 只读查询方法并输出 JSON；命令失败时返回结构化错误 category，低层 Neo4j/Cypher/密钥细节会被清洗。
+- `scripts\drawing_graph_tool.py list-drawing-sets|list-pages|page-source-facts|block-trace|block-relations|recognize-page-semantics|list-text-observations|list-interpretations|list-candidate-relations|list-section-matches`：当前已落地的 CLI 调用入口，参数映射到 facade 查询或按需语义识别方法并输出 JSON；`recognize-page-semantics` 默认 `write_back=false`，只有显式 `--write-back` 才触发受控语义证据写回；命令失败时返回结构化错误 category，低层 Neo4j/Cypher/密钥细节会被清洗。
 - `DrawingGraphQAService(facade)` 与 `DrawingGraphQAService.ask(request) -> QAAnswer`：QA 编排唯一入口；`request` 必须是 `QARequest`，`write_back=true` 会被 `WRITE_BACK_FORBIDDEN` 拒绝，第一阶段只读。
 - `scripts\drawing_graph_qa.py ask-page|ask-block|ask-candidates|ask-section|ask-table-caption|diagnose`：QA CLI 子命令，映射到 `page_summary`、`block_relations`、`candidate_relations`、`section_matches`、`table_caption_status`、`diagnostic_status`；`--format json` 为默认输出，`--format zh-brief` 输出简短中文。
 - `QAHttpConfig`（`src/drawing_graph/config.py`）：HTTP 专用不可变配置；默认 `127.0.0.1:8000`、`allow_remote=false`、空 CORS、65536 bytes、30 秒、8 并发、docs 关闭；非 loopback 必须 `allow_remote=true` 且配置 token；password 与 token 在 `repr` 中屏蔽。
@@ -73,10 +94,25 @@
 - `create_mcp_server(tools: DrawingGraphMCPTools)`：返回未启动的 `drawing-graph-qa` server；只注册六个只读工具，不注册 Resources/Prompts/Sampling。
 - `DrawingGraphMCPTools.ask_drawing_page|ask_drawing_block|list_drawing_candidates|get_section_match_status|get_table_caption_status|get_drawing_diagnostics`：六个只读 handler，固定 `write_back=false` 且 `include_payload=false`，只调用一次 QAService。
 - `scripts\serve_drawing_graph_mcp.py main() -> int`：唯一 STDIO 入口；正常结束返回 0，配置/装配失败返回 2，transport 失败返回 3，close 失败返回 4；stderr 只输出脱敏错误。
+- `RetrievalPlanner.plan(question_result, policy=None) -> RetrievalPlan`：只读检索规划；scope 缺失/冲突返回 `scope_missing`/`scope_conflict` warning，相同 facade 查询合并为一个 step。
+- `RetrievalExecutor.execute(plan, facade) -> (RawRetrievalResult, tuple[SourceCallRecord, ...])`：按白名单调用 facade 只读方法，同一 `dedupe_key` 只调用一次；异常映射为稳定原因码并脱敏。
+- `RetrievalBundleBuilder.build(question_result, plan, raw_result, source_calls) -> RetrievalBundle`：按 `fact_kind` 分层归一化，汇总缺失证据、warning 与整体状态。
+- `GraphRetrievalService.retrieve(question_result, policy=None) -> RetrievalBundle`：通用检索闭环入口，编排 plan -> execute -> build，默认只读。
+- `qa_request_to_question_result(request: QARequest) -> QuestionUnderstandingResult`：六类固定 QA 到产品检索需求的单向兼容映射。
+- `QuestionUnderstandingService.understand(request: AssistantRequest) -> QuestionUnderstandingResult`：01 问题理解闭环入口，把请求稳定转换为可交给 `GraphRetrievalService` 的结果；clarification/unsupported 不进入检索。
+- `QuestionTextNormalizer.normalize(question: str) -> str`、`ScopeResolver.resolve(question, scope_hint, conversation_context) -> ScopeResolutionResult`、`RuleQuestionRouter.route(question, scope) -> QuestionRouteResult`、`IntentSplitter.split(question, route_result, scope) -> tuple[AssistantSubrequest, ...]`、`EvidenceRequirementFactory.build(question_type, scope, request) -> tuple[EvidenceRequirement, ...]`、`ClarificationPolicy.evaluate(...) -> ClarificationDecision`、`QuestionUnderstandingTraceBuilder.build_event(...) -> QuestionUnderstandingEvent`、`validate_model_output(raw) -> ModelOutputValidation`：问题理解闭环的模块级接口，全部只读、无外部调用。
+- `EvidenceSufficiencyEvaluator.evaluate(question_result, retrieval_bundle) -> tuple[RequirementAssessment, ...]`：逐需求充分性评估。
+- `EvidenceFreshnessEvaluator.evaluate(assessments, retrieval_bundle, recognition_policy, requirements=None) -> tuple[RequirementAssessment, ...]` 与 `cache_candidates(...) -> tuple[CacheCandidate, ...]`：freshness 与缓存处置判断。
+- `RecognitionTargetPlanner.plan(assessments, retrieval_bundle, recognition_policy, requirements=None) -> tuple[RecognitionTarget, ...]`：最小识别目标规划。
+- `RecognitionBudgetEvaluator.evaluate(targets, policy) -> (selected, deferred, RecognitionEstimate)`：授权与预算/时延硬门控。
+- `SemanticGapDecisionService.decide(question_result, retrieval_bundle, recognition_policy=None) -> SemanticGapDecision`：03 决策编排入口，`write_back_recommendation` 恒为建议。
+- `DrawingGraphToolFacade.recognize_semantic_targets(targets, model_profile, prompt_version, contract_version, write_back=False)`：精确目标识别预留入口，默认 `write_back=false`。
+- `SemanticRecognitionService.recognize_targets(page_facts, targets, ...)`：执行前按统一 cache key 二次校验，缓存命中不调用供应商、不创建持久化 run log。
+- `create_semantic_gap_decision_service() -> SemanticGapDecisionService`：工厂装配纯决策服务，不连接数据库、不读取供应商凭据。
 
 ## 3. 新依赖
 
-新增依赖都是项目内 Python port、fake 实现、Python 标准库 CLI/JSON 支撑，以及 HTTP adapter 所需的 FastAPI、Uvicorn 和 HTTPX：`DrawingGraphReadPort`、`MultimodalRecognitionClient`、`RecognitionRunLogPort`、`SemanticEvidenceRepositoryPort`、`SectionMatchWritePort`、`SectionMatchQueryPort`、`SemanticCacheService`、`SemanticPayloadStore`，以及 QA 层的 `QARequest`、`QAAnswer`、`AnswerFact`、`EvidenceRef` 等 QA DTO。第三阶段新增官方 MCP Python SDK（`requirements.txt`：`mcp>=1.29.0,<2.0`）作为本地 STDIO MCP adapter 依赖；未新增真实云模型 SDK、Ava 专有 SDK 或第二套 Web/任务队列依赖。
+新增依赖都是项目内 Python port、fake 实现、Python 标准库 CLI/JSON 支撑，以及 HTTP adapter/Qwen OpenAI-compatible 调用共用的 HTTPX：`DrawingGraphReadPort`、`MultimodalRecognitionClient`、`RecognitionRunLogPort`、`SemanticEvidenceRepositoryPort`、`SectionMatchWritePort`、`SectionMatchQueryPort`、`SemanticCacheService`、`SemanticPayloadStore`，以及 QA 层的 `QARequest`、`QAAnswer`、`AnswerFact`、`EvidenceRef` 等 QA DTO。第三阶段新增官方 MCP Python SDK（`requirements.txt`：`mcp>=1.29.0,<2.0`）作为本地 STDIO MCP adapter 依赖；产品公共合同与通用检索模块新增项目内依赖：`assistant_models.py` 的公共 DTO、`RetrievalPlanner`/`RetrievalExecutor`/`RetrievalBundleBuilder`、`GraphRetrievalService`，以及 `assistant_qa_mapping.py` 对 `qa_models.py` 的单向导入；未新增外部依赖。
 
 `ToolFacadeConfig` 只接收 `default_write_back`、`model_profile`、`prompt_version`、`run_log_path`、`run_log_store`、`payload_store`、`semantic_repository`、`cache_store`、`section_match_rule_version` 等受控配置，不接收 Neo4j 密码、供应商 API key、token 或 secret。真实 Neo4j 集成测试仍需要单独配置 `NEO4J_TEST_URI`、`NEO4J_TEST_USER` 和 `NEO4J_TEST_PASSWORD`；跳过不等于通过。
 
@@ -96,7 +132,9 @@
 
 当前依赖方向是：薄 CLI adapter 或项目级 Skill（`.codex\skills\drawing-graph-operator\`）-> `DrawingGraphToolFacade` -> read port / semantic service / run log port / semantic repository / section match service / candidate review service -> 受控 repository。facade 不写 Cypher，不创建 Neo4j driver，不调用 CLI 脚本，不直接调用 `block_relation_enrichment.py` 的规则函数。Neo4j 生产装配由 `create_neo4j_tool_facade()` 完成；`scripts\drawing_graph_tool.py` 只在最外层读取环境变量、创建 driver、关闭 driver 并输出 JSON，driver 和 secret 仍由外部运行环境提供。
 
-QA 编排层位于 facade 外侧，CLI、HTTP 与 MCP 是同级 adapter，依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`（HTTP 对应 `HTTP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`，MCP 对应 `MCP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`）。`scripts\drawing_graph_qa.py`、`scripts\serve_drawing_graph_qa.py` 与 `scripts\serve_drawing_graph_mcp.py` 是最外层 adapter，`DrawingGraphQAService` 只通过 `DrawingGraphToolFacade` 获取图谱信息，默认 `write_back=false`，不写 Cypher、不持久化语义证据、不提升候选关系。HTTP 默认 loopback、单 worker、只读，CORS 与 OpenAPI docs 默认关闭；`/health/ready` 的 `neo4j_status="not_checked"` 不等于 live Neo4j 验证。本地只读 STDIO MCP adapter 已实现；首版不实现 Streamable HTTP，远程认证、OAuth、RBAC、TLS、多 worker、HTTP 写回与 plugin 发布仍未实现。Ava 专有 adapter、OCR、真实模型供应商和数据库 schema 变更也仍未实现。
+QA 编排层位于 facade 外侧，CLI、HTTP 与 MCP 是同级 adapter，依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`（HTTP 对应 `HTTP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`，MCP 对应 `MCP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`）。`scripts\drawing_graph_qa.py`、`scripts\serve_drawing_graph_qa.py` 与 `scripts\serve_drawing_graph_mcp.py` 是最外层 adapter，`DrawingGraphQAService` 只通过 `DrawingGraphToolFacade` 获取图谱信息，默认 `write_back=false`，不写 Cypher、不持久化语义证据、不提升候选关系。HTTP 默认 loopback、单 worker、只读，CORS 与 OpenAPI docs 默认关闭；`/health/ready` 的 `neo4j_status="not_checked"` 不等于 live Neo4j 验证。本地只读 STDIO MCP adapter 已实现；首版不实现 Streamable HTTP，远程认证、OAuth、RBAC、TLS、多 worker、HTTP 写回与 plugin 发布仍未实现。当前已有可选 Qwen/DashScope 多模态客户端，但不默认调用，live DashScope 验证需单独执行；Ava 专有 adapter、OCR 和数据库 schema 变更仍未实现。
+
+产品实现层新增并列链路：`Product adapter（后续）-> DrawingAssistantService（后续完整产品编排，当前未实现）-> QuestionUnderstandingService（01 问题理解闭环已实现）-> GraphRetrievalService -> RetrievalBundle -> SemanticGapDecisionService（03 语义缺口决策闭环已实现首阶段）-> 后续 04 多模态识别 / 05 证据融合 -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`。首阶段已落地产品公共合同、通用检索闭环、01 问题理解闭环与 03 语义缺口决策闭环（`assistant_*.py`），默认只读、`write_back=false`、不调用 Qwen、不创建 RecognitionRun、不写 Neo4j；候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系。03 决策模块不调用模型、不写缓存、不写 Neo4j、不创建 RecognitionRun，`write_back_recommendation` 只是建议。完整 `DrawingAssistantService`、证据融合、答案生成、反馈状态机、外部产品级 CLI/HTTP/MCP 入口与产品级写回仍未实现；未配置 live 环境导致集成测试 skipped 时，跳过不等于 live Neo4j 通过。
 
 Skill 与 MCP 分工：`drawing-graph-operator` Skill 是 facade 外侧的操作策略层，负责自然语言路由、多问题拆分、工具选择、透明降级和结果解释；MCP adapter 负责协议初始化、工具 Schema、annotations 与 STDIO 生命周期。Skill 不创建 driver、不执行 Cypher、不调用 repository 写回，也不承载图谱业务逻辑。
 

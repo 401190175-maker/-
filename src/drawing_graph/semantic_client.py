@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 
-from .tool_models import BBox, ToolModelError
+from .tool_models import BBox, SemanticTargetInput, ToolModelError
 
 
 TargetRef = tuple[str, str, BBox, BBox]
@@ -26,6 +26,7 @@ class RecognitionClientRequest:
     targets: tuple[TargetRef, ...]
     model_profile: str
     prompt_version: str
+    target_inputs: tuple[SemanticTargetInput, ...] = ()
     context: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -40,6 +41,14 @@ class RecognitionClientRequest:
             _require_text(target[1], "target_element_type")
             if not isinstance(target[2], BBox) or not isinstance(target[3], BBox):
                 raise ToolModelError("invalid_targets", "target bboxes must be BBox instances")
+        if not isinstance(self.target_inputs, tuple) or not all(
+            isinstance(item, SemanticTargetInput)
+            for item in self.target_inputs
+        ):
+            raise ToolModelError(
+                "invalid_target_inputs",
+                "target_inputs must be a tuple of SemanticTargetInput",
+            )
         if not isinstance(self.context, Mapping):
             raise ToolModelError("invalid_context", "context must be a mapping")
         forbidden = {"api_key", "token", "password", "secret"}

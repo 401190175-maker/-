@@ -21,6 +21,7 @@ from drawing_graph.tool_models import (
     SemanticObservationSummary,
     ToolModelError,
 )
+from drawing_graph.semantic_service import SemanticRecognitionResult
 
 
 class FakeConfig:
@@ -87,6 +88,25 @@ class FakeFacade:
                 fact_kind="formal_relation",
                 status="confirmed",
             ),
+        )
+
+    def recognize_page_semantics(
+        self,
+        page_id,
+        target_types,
+        model_profile="default",
+        prompt_version="default",
+        write_back=False,
+    ):
+        self.calls.append(
+            ("recognize_page_semantics", page_id, target_types, model_profile, prompt_version, write_back)
+        )
+        return SemanticRecognitionResult(
+            recognition_run_id="run:temp:1",
+            status="succeeded",
+            observations=(),
+            interpretations=(),
+            persisted=write_back,
         )
 
 
@@ -239,6 +259,64 @@ class DrawingGraphToolCliTest(unittest.TestCase):
         self.assertEqual("cross:1", payload["data"][0]["cross_section_id"])
         self.assertEqual(
             [("list_section_matches", "cross:1", None, ("candidate", "confirmed"))],
+            fake_facade.calls,
+        )
+
+    def test_recognize_page_semantics_defaults_to_dry_run(self):
+        module = _load_tool_cli()
+        fake_facade = FakeFacade()
+
+        exit_code, stdout, stderr = _run_main_with_output(
+            module,
+            [
+                "recognize-page-semantics",
+                "--page-id",
+                "page:1",
+                "--target-type",
+                "DrawingBlock",
+                "--model-profile",
+                "qwen3-vl-plus",
+                "--prompt-version",
+                "qwen-vision-v1",
+            ],
+            config_loader=lambda: FakeConfig(),
+            driver_factory=lambda uri, auth: FakeDriver(),
+            facade_factory=lambda driver: fake_facade,
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertEqual("ok", payload["status"])
+        self.assertFalse(payload["data"]["persisted"])
+        self.assertEqual(
+            [("recognize_page_semantics", "page:1", ("DrawingBlock",), "qwen3-vl-plus", "qwen-vision-v1", False)],
+            fake_facade.calls,
+        )
+
+    def test_recognize_page_semantics_write_back_requires_explicit_flag(self):
+        module = _load_tool_cli()
+        fake_facade = FakeFacade()
+
+        exit_code, stdout, stderr = _run_main_with_output(
+            module,
+            [
+                "recognize-page-semantics",
+                "--page-id",
+                "page:1",
+                "--write-back",
+            ],
+            config_loader=lambda: FakeConfig(),
+            driver_factory=lambda uri, auth: FakeDriver(),
+            facade_factory=lambda driver: fake_facade,
+        )
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("", stderr)
+        payload = json.loads(stdout)
+        self.assertTrue(payload["data"]["persisted"])
+        self.assertEqual(
+            [("recognize_page_semantics", "page:1", (), "default", "default", True)],
             fake_facade.calls,
         )
 

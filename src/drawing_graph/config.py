@@ -77,6 +77,27 @@ class ToolFacadeConfig:
     semantic_repository: str = "in_memory"
     cache_store: str = "in_memory"
     section_match_rule_version: str = "section-match-v1"
+    recognition_provider: str = "fake"
+    qwen_model: str = "qwen3-vl-plus"
+    qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    qwen_timeout_seconds: float = 60.0
+
+    @classmethod
+    def from_env(cls) -> "ToolFacadeConfig":
+        """Create facade config from optional non-secret environment settings."""
+
+        env = os.environ
+        return cls.from_mapping(
+            {
+                "recognition_provider": env.get("DRAWING_GRAPH_RECOGNITION_PROVIDER", "fake"),
+                "qwen_model": env.get("DRAWING_GRAPH_QWEN_MODEL", "qwen3-vl-plus"),
+                "qwen_base_url": env.get(
+                    "DRAWING_GRAPH_QWEN_BASE_URL",
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                ),
+                "qwen_timeout_seconds": env.get("DRAWING_GRAPH_QWEN_TIMEOUT_SECONDS", 60.0),
+            }
+        )
 
     @classmethod
     def from_mapping(cls, values: dict[str, object]) -> "ToolFacadeConfig":
@@ -109,6 +130,19 @@ class ToolFacadeConfig:
         section_match_rule_version = str(values.get("section_match_rule_version", "section-match-v1")).strip()
         if not section_match_rule_version:
             raise ValueError("section_match_rule_version must not be empty")
+        recognition_provider = str(values.get("recognition_provider", "fake")).strip().lower()
+        if recognition_provider not in {"fake", "qwen"}:
+            raise ValueError("recognition_provider must be 'fake' or 'qwen'")
+        qwen_model = str(values.get("qwen_model", "qwen3-vl-plus")).strip()
+        qwen_base_url = str(
+            values.get("qwen_base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        ).strip()
+        if not qwen_model or not qwen_base_url:
+            raise ValueError("qwen_model and qwen_base_url must not be empty")
+        qwen_timeout_seconds = _positive_float(
+            values.get("qwen_timeout_seconds", 60.0),
+            "qwen_timeout_seconds",
+        )
         return cls(
             default_write_back=default_write_back,
             model_profile=model_profile,
@@ -119,6 +153,10 @@ class ToolFacadeConfig:
             semantic_repository=semantic_repository,
             cache_store=cache_store,
             section_match_rule_version=section_match_rule_version,
+            recognition_provider=recognition_provider,
+            qwen_model=qwen_model,
+            qwen_base_url=qwen_base_url,
+            qwen_timeout_seconds=qwen_timeout_seconds,
         )
 
 
@@ -278,6 +316,16 @@ def _store_type(value: object, field_name: str) -> str:
     if store_type != "in_memory":
         raise ValueError(f"{field_name} must be a supported store type")
     return store_type
+
+
+def _positive_float(value: object, field_name: str) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field_name} must be numeric") from error
+    if parsed <= 0:
+        raise ValueError(f"{field_name} must be positive")
+    return parsed
 
 
 def _required_env(name: str) -> str:

@@ -261,7 +261,11 @@ class SemanticObservationSummary:
     confidence: float
     status: str
     model_profile: str = "default"
+    model_version: str | None = None
     prompt_version: str = "default"
+    contract_version: str | None = None
+    preprocessing_version: str | None = None
+    normalization_rule_version: str | None = None
     created_at: str | None = None
     image_hash: str | None = None
     cache_key: str | None = None
@@ -284,6 +288,13 @@ class SemanticObservationSummary:
             "prompt_version",
         ):
             _require_text(getattr(self, field_name), field_name)
+        for field_name in (
+            "model_version",
+            "contract_version",
+            "preprocessing_version",
+            "normalization_rule_version",
+        ):
+            _require_optional_text(getattr(self, field_name), field_name)
         _require_optional_text(self.created_at, "created_at")
         _require_optional_text(self.image_hash, "image_hash")
         _require_optional_text(self.cache_key, "cache_key")
@@ -305,6 +316,49 @@ class SemanticObservationSummary:
 
 
 @dataclass(frozen=True)
+class SemanticTargetInput:
+    """精确识别目标输入合同，供后续执行层消费，不含产品决策/预算/答案状态。"""
+
+    target_id: str
+    page_id: str
+    target_type: str
+    task_type: str
+    output_contract_version: str = "1"
+    target_element_id: str | None = None
+    required_outputs: tuple[str, ...] = ()
+    bbox: BBox | None = None
+    normalized_bbox: BBox | None = None
+    context_element_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_text(self.target_id, "target_id")
+        _require_text(self.page_id, "page_id")
+        _require_text(self.target_type, "target_type")
+        _require_text(self.task_type, "task_type")
+        _require_text(self.output_contract_version, "output_contract_version")
+        _require_optional_text(self.target_element_id, "target_element_id")
+        object.__setattr__(
+            self,
+            "required_outputs",
+            _read_text_tuple(self.required_outputs, "required_outputs"),
+        )
+        if self.bbox is not None and not isinstance(self.bbox, BBox):
+            raise ToolModelError("invalid_bbox", "bbox must be a BBox or None")
+        if self.normalized_bbox is not None and not isinstance(
+            self.normalized_bbox, BBox
+        ):
+            raise ToolModelError(
+                "invalid_bbox",
+                "normalized_bbox must be a BBox or None",
+            )
+        object.__setattr__(
+            self,
+            "context_element_ids",
+            _read_text_tuple(self.context_element_ids, "context_element_ids"),
+        )
+
+
+@dataclass(frozen=True)
 class SemanticInterpretationSummary:
     """Stable facade output for one structured interpretation."""
 
@@ -319,6 +373,11 @@ class SemanticInterpretationSummary:
     payload_ref: str | None = None
     cache_key: str | None = None
     contract_version: str = "1"
+    image_hash: str | None = None
+    model_profile: str | None = None
+    model_version: str | None = None
+    prompt_version: str | None = None
+    created_at: str | None = None
     uncertainties: tuple[str, ...] = ()
     supported_by_observation_ids: tuple[str, ...] = ()
     fact_kind: str = "semantic_interpretation"
@@ -341,6 +400,14 @@ class SemanticInterpretationSummary:
         _require_optional_text(self.interpreted_type, "interpreted_type")
         _require_optional_text(self.payload_ref, "payload_ref")
         _require_optional_text(self.cache_key, "cache_key")
+        for field_name in (
+            "image_hash",
+            "model_profile",
+            "model_version",
+            "prompt_version",
+            "created_at",
+        ):
+            _require_optional_text(getattr(self, field_name), field_name)
         if self.fact_kind != "semantic_interpretation":
             raise ToolModelError(
                 "invalid_fact_kind",
@@ -550,6 +617,7 @@ __all__ = (
     "SemanticInterpretationSummary",
     "SemanticObservationSummary",
     "SemanticPayloadSummary",
+    "SemanticTargetInput",
     "ToolError",
     "ToolErrorCode",
     "ToolModelError",

@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from drawing_graph.semantic_client import FakeMultimodalRecognitionClient, RecognitionClientRequest
-from drawing_graph.tool_models import BBox, ToolModelError
+from drawing_graph.tool_models import BBox, SemanticTargetInput, ToolModelError
 
 
 class SemanticClientTest(unittest.TestCase):
@@ -87,6 +87,61 @@ class SemanticClientTest(unittest.TestCase):
                 model_profile="default",
                 prompt_version="p1",
                 context={"api_key": "secret"},
+            )
+
+    def test_fake_client_consumes_precise_target_inputs(self):
+        client = FakeMultimodalRecognitionClient(
+            outputs=[
+                {
+                    "target_element_id": "element:1",
+                    "target_element_type": "DrawingBlock",
+                    "raw_text": "A1",
+                    "normalized_text": "A1",
+                    "confidence": 0.9,
+                    "status": "confirmed",
+                }
+            ]
+        )
+        request = RecognitionClientRequest(
+            page_id="page:1",
+            image_path="road_24.png",
+            targets=(),
+            model_profile="qwen-vl",
+            prompt_version="prompt-v1",
+            target_inputs=(
+                SemanticTargetInput(
+                    target_id="target:1",
+                    page_id="page:1",
+                    target_element_id="element:1",
+                    target_type="DrawingBlock",
+                    task_type="text_observation",
+                    required_outputs=("observation",),
+                    bbox=BBox(1, 2, 3, 4),
+                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+                    context_element_ids=("element:2",),
+                    output_contract_version="1",
+                ),
+            ),
+        )
+
+        result = client.recognize(request)
+
+        self.assertEqual("succeeded", result.status)
+        self.assertEqual(1, len(client.requests))
+        consumed = client.requests[0].target_inputs[0]
+        self.assertEqual("text_observation", consumed.task_type)
+        self.assertEqual(("observation",), consumed.required_outputs)
+        self.assertEqual("1", consumed.output_contract_version)
+
+    def test_request_rejects_invalid_target_inputs(self):
+        with self.assertRaises(ToolModelError):
+            RecognitionClientRequest(
+                page_id="page:1",
+                image_path="road_24.png",
+                targets=(),
+                model_profile="default",
+                prompt_version="p1",
+                target_inputs=("not-a-target",),
             )
 
 

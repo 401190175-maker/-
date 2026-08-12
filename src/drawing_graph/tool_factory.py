@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from .assistant_evidence_freshness import EvidenceFreshnessEvaluator
+from .assistant_evidence_sufficiency import EvidenceSufficiencyEvaluator
+from .assistant_recognition_budget import RecognitionBudgetEvaluator
+from .assistant_recognition_target_planner import RecognitionTargetPlanner
+from .assistant_semantic_gap_decision import SemanticGapDecisionService
 from .config import ToolFacadeConfig
 from .candidate_review import CandidateReviewResult, CandidateReviewService
 from .query_port_adapter import QueryServiceReadPortAdapter
@@ -20,6 +25,7 @@ from .semantic_client import FakeMultimodalRecognitionClient
 from .semantic_neo4j_repository import SemanticNeo4jRepository
 from .semantic_repository import InMemorySemanticEvidenceRepository
 from .semantic_service import SemanticRecognitionService
+from .qwen_semantic_client import QwenMultimodalRecognitionClient, QwenRecognitionConfig
 from .section_match_service import SectionMatchService
 from .source_fact_query import Neo4jPageSourceFactReader, SourceFactQuery
 from .tool_facade import DrawingGraphToolFacade
@@ -28,14 +34,14 @@ from .tool_facade import DrawingGraphToolFacade
 def create_tool_facade(read_port, config: ToolFacadeConfig | None = None) -> DrawingGraphToolFacade:
     """Create a facade from injected ports without opening database connections."""
 
-    facade_config = config or ToolFacadeConfig.from_mapping({})
+    facade_config = config or ToolFacadeConfig.from_env()
     run_log = InMemoryRecognitionRunLog()
     semantic_repository = InMemorySemanticEvidenceRepository()
     payload_store = InMemorySemanticPayloadStore()
     cache_service = InMemorySemanticCacheService()
     input_builder = SemanticImageInputBuilder()
     semantic_service = SemanticRecognitionService(
-        client=FakeMultimodalRecognitionClient(),
+        client=_recognition_client(facade_config),
         run_log=run_log,
         semantic_repository=semantic_repository,
         input_builder=input_builder,
@@ -59,7 +65,7 @@ def create_neo4j_tool_facade(
 ) -> DrawingGraphToolFacade:
     """Create a facade wired to Neo4j-backed ports without opening a connection."""
 
-    facade_config = config or ToolFacadeConfig.from_mapping({})
+    facade_config = config or ToolFacadeConfig.from_env()
     query_service = QueryService(driver)
     page_source_reader = source_fact_reader or SourceFactQuery(Neo4jPageSourceFactReader(driver))
     read_port = QueryServiceReadPortAdapter(query_service, source_fact_reader=page_source_reader)
@@ -69,7 +75,7 @@ def create_neo4j_tool_facade(
     cache_service = InMemorySemanticCacheService()
     input_builder = SemanticImageInputBuilder()
     semantic_service = SemanticRecognitionService(
-        client=FakeMultimodalRecognitionClient(),
+        client=_recognition_client(facade_config),
         run_log=run_log,
         semantic_repository=semantic_repository,
         input_builder=input_builder,
@@ -90,7 +96,22 @@ def create_neo4j_tool_facade(
     )
 
 
-__all__ = ("create_tool_facade", "create_neo4j_tool_facade")
+def create_semantic_gap_decision_service() -> SemanticGapDecisionService:
+    """创建纯决策的语义缺口决策服务，不连接数据库、不读取供应商凭据。"""
+
+    return SemanticGapDecisionService(
+        sufficiency_evaluator=EvidenceSufficiencyEvaluator(),
+        freshness_evaluator=EvidenceFreshnessEvaluator(),
+        target_planner=RecognitionTargetPlanner(),
+        budget_evaluator=RecognitionBudgetEvaluator(),
+    )
+
+
+__all__ = (
+    "create_semantic_gap_decision_service",
+    "create_tool_facade",
+    "create_neo4j_tool_facade",
+)
 
 
 class _SubmittedDecisionReviewClient:
@@ -109,3 +130,17 @@ class _SubmittedDecisionReviewClient:
             accepted_candidate_id=accepted_candidate_id,
             reason=reason,
         )
+
+
+def _recognition_client(config: ToolFacadeConfig):
+    """Create the configured recognition provider without broadening facade ports."""
+
+    if config.recognition_provider == "qwen":
+        return QwenMultimodalRecognitionClient(
+            QwenRecognitionConfig.from_env(
+                model=config.qwen_model,
+                base_url=config.qwen_base_url,
+                timeout_seconds=config.qwen_timeout_seconds,
+            )
+        )
+    return FakeMultimodalRecognitionClient()
