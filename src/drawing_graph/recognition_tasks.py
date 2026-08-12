@@ -169,6 +169,33 @@ def element_text_observation_spec() -> RecognitionTaskSpec:
     )
 
 
+def block_semantic_identification_spec() -> RecognitionTaskSpec:
+    """Return the block_semantic_identification task contract.
+
+    The task reads one DrawingBlock local crop with a whitelisted minimum
+    context and produces a block interpretation with optional observations.
+    It must never modify ``DrawingBlock.block_type``.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.BLOCK_SEMANTIC_IDENTIFICATION,
+        allowed_target_types=("DrawingBlock",),
+        required_context_types=(),
+        prompt_template_id="prompt/block-semantic-identification",
+        prompt_version="prompt-v1",
+        input_contract_id="input/block-semantic-identification",
+        input_contract_version="1",
+        output_schema_id="output/block-semantic-identification",
+        output_contract_version="1",
+        crop_policy_id="crop/block-local-min-context-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("interpretation",),
+        allow_structure_repair=True,
+        allowed_write_back=("run", "payload", "BlockInterpretation", "TextObservation"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -201,6 +228,7 @@ def _require_text(value: Any, field_name: str) -> str:
 __all__ = (
     "RecognitionTaskRegistry",
     "RecognitionTaskSpec",
+    "block_semantic_identification_spec",
     "element_text_observation_spec",
     "page_summary_spec",
 )

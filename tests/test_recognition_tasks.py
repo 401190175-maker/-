@@ -10,6 +10,7 @@ from drawing_graph.recognition_models import RecognitionTaskType
 from drawing_graph.recognition_tasks import (
     RecognitionTaskRegistry,
     RecognitionTaskSpec,
+    block_semantic_identification_spec,
     element_text_observation_spec,
     page_summary_spec,
 )
@@ -188,6 +189,21 @@ class ElementTextObservationSpecTests(unittest.TestCase):
         self.assertTrue(spec.crop_policy_id.startswith("crop/"))
         self.assertIn("local", spec.crop_policy_id)
         self.assertEqual(("run", "payload", "TextObservation"), spec.allowed_write_back)
+
+
+class BlockSemanticIdentificationSpecTests(unittest.TestCase):
+    """block_semantic_identification binds DrawingBlock local-crop contracts."""
+
+    def test_block_semantic_identification_spec(self) -> None:
+        spec = block_semantic_identification_spec()
+        self.assertIs(RecognitionTaskType.BLOCK_SEMANTIC_IDENTIFICATION, spec.task_type)
+        self.assertEqual(("DrawingBlock",), spec.allowed_target_types)
+        self.assertIn("interpretation", spec.required_outputs)
+        self.assertTrue(spec.crop_policy_id.startswith("crop/"))
+        self.assertIn("local", spec.crop_policy_id)
+        self.assertIn("context", spec.crop_policy_id)
+        self.assertEqual(("run", "payload", "BlockInterpretation", "TextObservation"), spec.allowed_write_back)
+        self.assertNotIn("block_type", spec.allowed_write_back)
 
 
 if __name__ == "__main__":
