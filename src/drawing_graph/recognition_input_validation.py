@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .recognition_models import (
@@ -50,7 +51,9 @@ class RecognitionInputValidator:
 
         validated_targets: list[SemanticTargetInput] = []
         for target in request.targets:
-            _validate_target_identity(target, page_facts, task_spec, task_type)
+            element = _validate_target_identity(target, page_facts, task_spec, task_type)
+            _validate_target_spatial(target, page_facts, task_spec, task_type, element)
+            _validate_context(target, page_facts, task_spec)
             validated_targets.append(target)
 
         return ValidatedRecognitionRequest(
@@ -76,7 +79,7 @@ def _validate_target_identity(
     page_facts: PageSourceFacts,
     task_spec: RecognitionTaskSpec,
     task_type: RecognitionTaskType,
-) -> None:
+) -> ElementEvidence | None:
     if target.page_id != page_facts.page_id:
         raise RecognitionInputError(
             "page_mismatch",
@@ -98,7 +101,7 @@ def _validate_target_identity(
                 "page_target_with_element",
                 "page_summary targets must not carry an element id",
             )
-        return
+        return None
 
     if target.target_element_id is None:
         raise RecognitionInputError(
@@ -116,6 +119,147 @@ def _validate_target_identity(
             "element_type_mismatch",
             "target element type must match the source fact element type",
         )
+    return element
+
+
+def _validate_target_spatial(
+    target: SemanticTargetInput,
+    page_facts: PageSourceFacts,
+    task_spec: RecognitionTaskSpec,
+    task_type: RecognitionTaskType,
+    element: ElementEvidence | None,
+) -> None:
+    """Validate bbox coordinates against image bounds and source facts."""
+
+    if task_type is RecognitionTaskType.PAGE_SUMMARY:
+        if target.bbox is not None or target.normalized_bbox is not None:
+            raise RecognitionInputError(
+                "page_target_with_bbox",
+                "page_summary targets must not carry a bbox; the full page is the input",
+            )
+        return
+    if target.bbox is None or target.normalized_bbox is None:
+        raise RecognitionInputError(
+            "missing_bbox",
+            f"task {task_type.value} requires bbox and normalized_bbox",
+        )
+    _require_finite_bbox(target.bbox, "bbox")
+    _require_finite_bbox(target.normalized_bbox, "normalized_bbox")
+    if page_facts.image_size is None:
+        raise RecognitionInputError(
+            "image_size_missing",
+            "page image size is required to validate element bbox bounds",
+        )
+    width, height = page_facts.image_size
+    if (
+        target.bbox.x_min < 0
+        or target.bbox.y_min < 0
+        or target.bbox.x_max > width
+        or target.bbox.y_max > height
+    ):
+        raise RecognitionInputError(
+            "bbox_out_of_bounds",
+            "bbox must lie inside the page image bounds",
+        )
+    for coordinate in (
+        target.normalized_bbox.x_min,
+        target.normalized_bbox.y_min,
+        target.normalized_bbox.x_max,
+        target.normalized_bbox.y_max,
+    ):
+        if not 0 <= coordinate <= 1:
+            raise RecognitionInputError(
+                "normalized_bbox_out_of_range",
+                "normalized_bbox values must be between 0 and 1",
+            )
+    expected = (
+        target.bbox.x_min / width,
+        target.bbox.y_min / height,
+        target.bbox.x_max / width,
+        target.bbox.y_max / height,
+    )
+    actual = (
+        target.normalized_bbox.x_min,
+        target.normalized_bbox.y_min,
+        target.normalized_bbox.x_max,
+        target.normalized_bbox.y_max,
+    )
+    if not all(math.isclose(exp, act, abs_tol=1e-3) for exp, act in zip(expected, actual)):
+        raise RecognitionInputError(
+            "normalized_bbox_mismatch",
+            "normalized_bbox must be consistent with the pixel bbox and image size",
+        )
+    if element is None:
+        raise RecognitionInputError(
+            "element_not_found",
+            "target element must exist for spatial validation",
+        )
+    source_bbox = (element.bbox.x_min, element.bbox.y_min, element.bbox.x_max, element.bbox.y_max)
+    target_bbox = (target.bbox.x_min, target.bbox.y_min, target.bbox.x_max, target.bbox.y_max)
+    if not all(math.isclose(exp, act, abs_tol=1e-6) for exp, act in zip(source_bbox, target_bbox)):
+        raise RecognitionInputError(
+            "bbox_mismatch",
+            "target bbox must match the source fact bbox",
+        )
+    source_normalized = (
+        element.normalized_bbox.x_min,
+        element.normalized_bbox.y_min,
+        element.normalized_bbox.x_max,
+        element.normalized_bbox.y_max,
+    )
+    target_normalized = (
+        target.normalized_bbox.x_min,
+        target.normalized_bbox.y_min,
+        target.normalized_bbox.x_max,
+        target.normalized_bbox.y_max,
+    )
+    if not all(math.isclose(exp, act, abs_tol=1e-6) for exp, act in zip(source_normalized, target_normalized)):
+        raise RecognitionInputError(
+            "normalized_bbox_mismatch",
+            "target normalized_bbox must match the source fact normalized_bbox",
+        )
+
+
+def _validate_context(
+    target: SemanticTargetInput,
+    page_facts: PageSourceFacts,
+    task_spec: RecognitionTaskSpec,
+) -> None:
+    """Validate context IDs are same-page and inside the task whitelist."""
+
+    seen: set[str] = set()
+    for context_id in target.context_element_ids:
+        if context_id in seen:
+            raise RecognitionInputError(
+                "duplicate_context",
+                "context element ids must be unique",
+            )
+        seen.add(context_id)
+        if not task_spec.required_context_types:
+            raise RecognitionInputError(
+                "context_not_allowed",
+                f"task {task_spec.task_type.value} does not allow context elements",
+            )
+        element = _find_element(page_facts, context_id)
+        if element is None:
+            raise RecognitionInputError(
+                "context_not_found",
+                f"context element {context_id!r} was not found on the page",
+            )
+        if element.element_type not in task_spec.required_context_types:
+            raise RecognitionInputError(
+                "context_type_not_allowed",
+                f"context element type {element.element_type!r} is not allowed by the task",
+            )
+
+
+def _require_finite_bbox(bbox: Any, field_name: str) -> None:
+    for coordinate in (bbox.x_min, bbox.y_min, bbox.x_max, bbox.y_max):
+        if not isinstance(coordinate, (int, float)) or isinstance(coordinate, bool) or not math.isfinite(coordinate):
+            raise RecognitionInputError(
+                "invalid_bbox",
+                f"{field_name} coordinates must be finite numbers",
+            )
 
 
 def _find_element(page_facts: PageSourceFacts, element_id: str) -> ElementEvidence | None:

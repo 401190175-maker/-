@@ -13,6 +13,7 @@ from drawing_graph.recognition_models import (
 from drawing_graph.recognition_tasks import (
     block_semantic_identification_spec,
     page_summary_spec,
+    section_label_observation_spec,
     table_interpretation_spec,
 )
 from drawing_graph.tool_models import BBox, ElementEvidence, PageSourceFacts, SemanticTargetInput
@@ -21,12 +22,14 @@ from drawing_graph.tool_models import BBox, ElementEvidence, PageSourceFacts, Se
 def _element(
     element_id: str = "block-1",
     element_type: str = "DrawingBlock",
+    bbox: BBox | None = None,
+    normalized_bbox: BBox | None = None,
 ) -> ElementEvidence:
     return ElementEvidence(
         element_id=element_id,
         element_type=element_type,
-        bbox=BBox(10, 10, 100, 100),
-        normalized_bbox=BBox(0.01, 0.01, 0.1, 0.1),
+        bbox=bbox or BBox(10, 10, 100, 100),
+        normalized_bbox=normalized_bbox or BBox(0.01, 0.0125, 0.1, 0.125),
         source_label=element_id,
     )
 
@@ -41,6 +44,9 @@ def _page_facts(*elements: ElementEvidence) -> PageSourceFacts:
     )
 
 
+_MISSING = object()
+
+
 def _target(
     *,
     target_id: str = "target-1",
@@ -48,13 +54,23 @@ def _target(
     target_type: str = "DrawingBlock",
     task_type: str = "block_semantic_identification",
     target_element_id: str | None = "block-1",
+    bbox: BBox | None | object = _MISSING,
+    normalized_bbox: BBox | None | object = _MISSING,
+    context_element_ids: tuple[str, ...] = (),
 ) -> SemanticTargetInput:
+    if bbox is _MISSING:
+        bbox = None if task_type == "page_summary" else BBox(10, 10, 100, 100)
+    if normalized_bbox is _MISSING:
+        normalized_bbox = None if task_type == "page_summary" else BBox(0.01, 0.0125, 0.1, 0.125)
     return SemanticTargetInput(
         target_id=target_id,
         page_id=page_id,
         target_type=target_type,
         task_type=task_type,
         target_element_id=target_element_id,
+        bbox=bbox,
+        normalized_bbox=normalized_bbox,
+        context_element_ids=context_element_ids,
     )
 
 
@@ -183,6 +199,175 @@ class RecognitionIdentityValidationTests(unittest.TestCase):
         )
         for forbidden in ("neo4j", "repository", "cypher", "httpx", "qwen", "facade", "os.environ", "pathlib"):
             self.assertNotIn(forbidden, import_lines)
+
+
+class RecognitionSpatialValidationTests(unittest.TestCase):
+    """bbox, normalized bbox and same-page context validation."""
+
+    def test_element_task_without_bbox_is_rejected(self) -> None:
+        target = _target(bbox=None, normalized_bbox=None)
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_nan_bbox_coordinate_is_rejected(self) -> None:
+        target = _target(bbox=BBox(float("nan"), 10, 100, 100))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_infinite_bbox_coordinate_is_rejected(self) -> None:
+        target = _target(bbox=BBox(10, 10, 100, float("inf")))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_bbox_outside_image_size_is_rejected(self) -> None:
+        target = _target(bbox=BBox(10, 10, 1200, 100))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_normalized_bbox_outside_unit_range_is_rejected(self) -> None:
+        target = _target(normalized_bbox=BBox(-0.1, 0.01, 0.1, 0.1))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_normalized_bbox_inconsistent_with_pixel_bbox_is_rejected(self) -> None:
+        target = _target(normalized_bbox=BBox(0.5, 0.5, 0.6, 0.6))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_bbox_inconsistent_with_source_fact_is_rejected(self) -> None:
+        target = _target(bbox=BBox(20, 20, 120, 120))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_missing_image_size_is_rejected_for_element_task(self) -> None:
+        facts = PageSourceFacts(
+            page_id="page-1",
+            image_path=r"C:\drawings\page-1.png",
+            elements=(_element(),),
+            image_hash="hash-1",
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(_target()),
+                facts,
+                block_semantic_identification_spec(),
+            )
+
+    def test_page_target_with_bbox_is_rejected(self) -> None:
+        target = _target(
+            target_type="DrawingPage",
+            task_type="page_summary",
+            target_element_id=None,
+            bbox=BBox(0, 0, 100, 100),
+            normalized_bbox=BBox(0, 0, 0.1, 0.1),
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(),
+                page_summary_spec(),
+            )
+
+    def test_context_id_must_exist_on_same_page(self) -> None:
+        target = _target(context_element_ids=("missing-caption",))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_context_type_must_be_in_task_whitelist(self) -> None:
+        target = _target(context_element_ids=("caption-1",))
+        facts = _page_facts(_element(), _element("caption-1", "TableCaption"))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                facts,
+                block_semantic_identification_spec(),
+            )
+
+    def test_context_is_rejected_when_task_has_no_context_whitelist(self) -> None:
+        target = _target(context_element_ids=("block-2",))
+        facts = _page_facts(_element(), _element("block-2", "DrawingBlock"))
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                facts,
+                block_semantic_identification_spec(),
+            )
+
+    def test_valid_whitelisted_context_passes(self) -> None:
+        target = _target(
+            target_type="Table",
+            task_type="table_interpretation",
+            target_element_id="table-1",
+            bbox=BBox(10, 10, 200, 100),
+            normalized_bbox=BBox(0.01, 0.0125, 0.2, 0.125),
+            context_element_ids=("caption-1",),
+        )
+        facts = _page_facts(
+            _element(
+                "table-1",
+                "Table",
+                bbox=BBox(10, 10, 200, 100),
+                normalized_bbox=BBox(0.01, 0.0125, 0.2, 0.125),
+            ),
+            _element("caption-1", "TableCaption"),
+        )
+        validated = RecognitionInputValidator().validate(
+            _request(target, task_type="table_interpretation"),
+            facts,
+            table_interpretation_spec(),
+        )
+        self.assertEqual(("caption-1",), validated.targets[0].context_element_ids)
+
+    def test_element_task_without_image_size_is_rejected_for_section_label(self) -> None:
+        target = _target(
+            target_type="CrossSection",
+            task_type="section_label_observation",
+            target_element_id="section-1",
+        )
+        facts = PageSourceFacts(
+            page_id="page-1",
+            image_path=r"C:\drawings\page-1.png",
+            elements=(_element("section-1", "CrossSection"),),
+            image_hash="hash-1",
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                _request(target),
+                facts,
+                section_label_observation_spec(),
+            )
 
 
 if __name__ == "__main__":
