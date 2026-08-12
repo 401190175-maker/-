@@ -6,6 +6,7 @@ import math
 from typing import Any
 
 from .recognition_models import (
+    RecognitionExecutionPolicy,
     RecognitionExecutionRequest,
     RecognitionTaskType,
     ValidatedRecognitionRequest,
@@ -30,12 +31,19 @@ class RecognitionInputValidator:
         request: RecognitionExecutionRequest,
         page_facts: PageSourceFacts,
         task_spec: RecognitionTaskSpec,
+        server_policy: RecognitionExecutionPolicy | None = None,
     ) -> ValidatedRecognitionRequest:
         """Return the validated internal projection or raise RecognitionInputError."""
 
         _require_instance(request, RecognitionExecutionRequest, "request")
         _require_instance(page_facts, PageSourceFacts, "page_facts")
         _require_instance(task_spec, RecognitionTaskSpec, "task_spec")
+        if server_policy is not None:
+            _require_instance(server_policy, RecognitionExecutionPolicy, "server_policy")
+
+        _validate_safe_fields(request)
+        _validate_versions(request, task_spec)
+        _validate_execution_policy(request, server_policy)
 
         task_type = _task_type(request.task_type)
         if task_type is not _task_type(task_spec.task_type):
@@ -71,6 +79,7 @@ class RecognitionInputValidator:
             deadline_seconds=request.deadline_seconds,
             image_path=page_facts.image_path,
             image_size=page_facts.image_size,
+            execution_policy=request.execution_policy,
         )
 
 
@@ -251,6 +260,107 @@ def _validate_context(
                 "context_type_not_allowed",
                 f"context element type {element.element_type!r} is not allowed by the task",
             )
+
+
+def _validate_safe_fields(request: RecognitionExecutionRequest) -> None:
+    """Reject secrets, authorization material and absolute paths in input text."""
+
+    for field_name in (
+        "request_id",
+        "recognition_run_id",
+        "page_id",
+        "model_profile",
+        "prompt_version",
+        "input_contract_version",
+        "output_contract_version",
+        "preprocessing_version",
+    ):
+        _reject_unsafe_text(getattr(request, field_name), field_name)
+    for target in request.targets:
+        _reject_unsafe_text(target.target_id, "target_id")
+        _reject_unsafe_text(target.page_id, "target.page_id")
+        _reject_unsafe_text(target.target_type, "target_type")
+        _reject_unsafe_text(target.task_type, "target.task_type")
+        if target.target_element_id is not None:
+            _reject_unsafe_text(target.target_element_id, "target_element_id")
+        for context_id in target.context_element_ids:
+            _reject_unsafe_text(context_id, "context_element_id")
+
+
+def _validate_versions(request: RecognitionExecutionRequest, task_spec: RecognitionTaskSpec) -> None:
+    """Bind prompt, input/output contract and preprocessing versions to the spec."""
+
+    expected = {
+        "prompt_version": (request.prompt_version, task_spec.prompt_version),
+        "input_contract_version": (request.input_contract_version, task_spec.input_contract_version),
+        "output_contract_version": (request.output_contract_version, task_spec.output_contract_version),
+        "preprocessing_version": (request.preprocessing_version, task_spec.preprocessing_version),
+    }
+    for field_name, (actual, wanted) in expected.items():
+        if actual != wanted:
+            raise RecognitionInputError(
+                "version_mismatch",
+                f"{field_name} must match the task spec ({wanted!r})",
+            )
+
+
+def _validate_execution_policy(
+    request: RecognitionExecutionRequest,
+    server_policy: RecognitionExecutionPolicy | None,
+) -> None:
+    """Callers may only tighten server-side attempts, deadline and budget."""
+
+    if server_policy is None:
+        return
+    if request.deadline_seconds > server_policy.deadline_seconds:
+        raise RecognitionInputError(
+            "policy_relaxed",
+            "request deadline must not exceed the server policy deadline",
+        )
+    caller_policy = request.execution_policy
+    if caller_policy is None:
+        return
+    if caller_policy.max_attempts > server_policy.max_attempts:
+        raise RecognitionInputError(
+            "policy_relaxed",
+            "caller max_attempts must not exceed the server policy",
+        )
+    if caller_policy.structure_repair_attempts > server_policy.structure_repair_attempts:
+        raise RecognitionInputError(
+            "policy_relaxed",
+            "caller structure_repair_attempts must not exceed the server policy",
+        )
+    if (
+        caller_policy.estimated_cost_budget is not None
+        and server_policy.estimated_cost_budget is not None
+        and caller_policy.estimated_cost_budget > server_policy.estimated_cost_budget
+    ):
+        raise RecognitionInputError(
+            "policy_relaxed",
+            "caller estimated_cost_budget must not exceed the server policy",
+        )
+
+
+def _reject_unsafe_text(value: Any, field_name: str) -> None:
+    if not isinstance(value, str):
+        raise RecognitionInputError("unsafe_field", f"{field_name} must be text")
+    lowered = value.lower()
+    for token in ("authorization", "api_key", "apikey", "token", "password", "secret", "bearer"):
+        if token in lowered:
+            raise RecognitionInputError(
+                "unsafe_field",
+                f"{field_name} must not contain credentials or authorization material",
+            )
+    if (
+        value.startswith("/")
+        or "\\" in value
+        or "://" in value
+        or (len(value) >= 2 and value[0].isalpha() and value[1] == ":")
+    ):
+        raise RecognitionInputError(
+            "unsafe_field",
+            f"{field_name} must not contain absolute paths",
+        )
 
 
 def _require_finite_bbox(bbox: Any, field_name: str) -> None:

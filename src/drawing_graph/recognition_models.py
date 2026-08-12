@@ -150,6 +150,7 @@ class RecognitionExecutionRequest:
     preprocessing_version: str = "preprocess-v1"
     write_back: bool = False
     deadline_seconds: float = 60.0
+    execution_policy: RecognitionExecutionPolicy | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -171,6 +172,8 @@ class RecognitionExecutionRequest:
         if not isinstance(self.write_back, bool):
             raise ToolModelError("invalid_write_back", "write_back must be a boolean")
         _require_positive_number(self.deadline_seconds, "deadline_seconds")
+        if self.execution_policy is not None and not isinstance(self.execution_policy, RecognitionExecutionPolicy):
+            raise ToolModelError("invalid_policy", "execution_policy must be a RecognitionExecutionPolicy or None")
 
 
 @dataclass(frozen=True)
@@ -196,6 +199,7 @@ class ValidatedRecognitionRequest:
     deadline_seconds: float = 60.0
     image_path: str | None = field(default=None, repr=False)
     image_size: tuple[int, int] | None = None
+    execution_policy: RecognitionExecutionPolicy | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -225,6 +229,8 @@ class ValidatedRecognitionRequest:
                 or not all(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in self.image_size)
             ):
                 raise ToolModelError("invalid_image_size", "image_size must be a positive (width, height) tuple")
+        if self.execution_policy is not None and not isinstance(self.execution_policy, RecognitionExecutionPolicy):
+            raise ToolModelError("invalid_policy", "execution_policy must be a RecognitionExecutionPolicy or None")
 
 
 @dataclass(frozen=True)

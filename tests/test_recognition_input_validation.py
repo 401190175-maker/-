@@ -6,6 +6,7 @@ import unittest
 
 from drawing_graph.recognition_input_validation import RecognitionInputError, RecognitionInputValidator
 from drawing_graph.recognition_models import (
+    RecognitionExecutionPolicy,
     RecognitionExecutionRequest,
     RecognitionTaskType,
     ValidatedRecognitionRequest,
@@ -368,6 +369,288 @@ class RecognitionSpatialValidationTests(unittest.TestCase):
                 facts,
                 section_label_observation_spec(),
             )
+
+
+class RecognitionSecurityValidationTests(unittest.TestCase):
+    """Input safety, version binding and execution-policy tightening checks."""
+
+    def _validate(
+        self,
+        target: SemanticTargetInput,
+        *,
+        task_type: str | None = None,
+        server_policy: RecognitionExecutionPolicy | None = None,
+        prompt_version: str = "prompt-v1",
+    ) -> ValidatedRecognitionRequest:
+        request = _request(target, task_type=task_type)
+        return RecognitionInputValidator().validate(
+            request,
+            _page_facts(_element()),
+            block_semantic_identification_spec(),
+            server_policy=server_policy,
+        )
+
+    def test_secret_keyword_in_request_field_is_rejected(self) -> None:
+        request = _request(_target())
+        request = RecognitionExecutionRequest(
+            request_id="api_key_leak",
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_authorization_in_model_profile_is_rejected(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile="Authorization: Bearer xyz",
+            prompt_version=request.prompt_version,
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_token_in_target_id_is_rejected(self) -> None:
+        target = _target(target_id="token-abc")
+        with self.assertRaises(RecognitionInputError):
+            self._validate(target)
+
+    def test_absolute_path_in_page_id_is_rejected(self) -> None:
+        target = _target(page_id=r"C:\Users\me\drawings\page-1")
+        with self.assertRaises(RecognitionInputError):
+            self._validate(target)
+
+    def test_secret_in_context_element_id_is_rejected(self) -> None:
+        target = _target(context_element_ids=("secret-context",))
+        with self.assertRaises(RecognitionInputError):
+            self._validate(target)
+
+    def test_unknown_context_fields_are_rejected_at_dto_boundary(self) -> None:
+        with self.assertRaises(TypeError):
+            SemanticTargetInput(
+                target_id="target-1",
+                page_id="page-1",
+                target_type="DrawingBlock",
+                task_type="block_semantic_identification",
+                target_element_id="block-1",
+                context={"api_key": "secret"},
+            )
+
+    def test_prompt_version_must_match_spec(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version="prompt-v2",
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_input_contract_version_must_match_spec(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            input_contract_version="2",
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_output_contract_version_must_match_spec(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            output_contract_version="3",
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_preprocessing_version_must_match_spec(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            preprocessing_version="preprocess-v2",
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+            )
+
+    def test_caller_deadline_cannot_relax_server_policy(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            deadline_seconds=120.0,
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+                server_policy=RecognitionExecutionPolicy(deadline_seconds=60.0),
+            )
+
+    def test_caller_attempts_cannot_relax_server_policy(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            execution_policy=RecognitionExecutionPolicy(max_attempts=5),
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+                server_policy=RecognitionExecutionPolicy(max_attempts=3),
+            )
+
+    def test_caller_repair_cannot_relax_server_policy(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            execution_policy=RecognitionExecutionPolicy(max_attempts=3, structure_repair_attempts=2),
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+                server_policy=RecognitionExecutionPolicy(max_attempts=3, structure_repair_attempts=1),
+            )
+
+    def test_caller_budget_cannot_relax_server_policy(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            execution_policy=RecognitionExecutionPolicy(estimated_cost_budget=2.0),
+        )
+        with self.assertRaises(RecognitionInputError):
+            RecognitionInputValidator().validate(
+                request,
+                _page_facts(_element()),
+                block_semantic_identification_spec(),
+                server_policy=RecognitionExecutionPolicy(estimated_cost_budget=1.0),
+            )
+
+    def test_tightening_limits_are_accepted(self) -> None:
+        target = _target()
+        request = _request(target)
+        request = RecognitionExecutionRequest(
+            request_id=request.request_id,
+            recognition_run_id=request.recognition_run_id,
+            page_id=request.page_id,
+            task_type=request.task_type,
+            targets=request.targets,
+            model_profile=request.model_profile,
+            prompt_version=request.prompt_version,
+            deadline_seconds=30.0,
+            execution_policy=RecognitionExecutionPolicy(
+                max_attempts=2,
+                structure_repair_attempts=1,
+                estimated_cost_budget=0.5,
+            ),
+        )
+        validated = RecognitionInputValidator().validate(
+            request,
+            _page_facts(_element()),
+            block_semantic_identification_spec(),
+            server_policy=RecognitionExecutionPolicy(
+                max_attempts=3,
+                structure_repair_attempts=1,
+                deadline_seconds=60.0,
+                estimated_cost_budget=1.0,
+            ),
+        )
+        self.assertEqual(30.0, validated.deadline_seconds)
+        self.assertEqual(2, validated.execution_policy.max_attempts)
+
+    def test_write_back_defaults_to_false_in_validation(self) -> None:
+        validated = self._validate(_target())
+        self.assertIs(False, validated.write_back)
 
 
 if __name__ == "__main__":
