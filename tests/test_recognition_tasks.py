@@ -14,6 +14,7 @@ from drawing_graph.recognition_tasks import (
     block_semantic_identification_spec,
     element_text_observation_spec,
     page_summary_spec,
+    section_label_observation_spec,
     table_interpretation_spec,
 )
 from drawing_graph.tool_models import ToolModelError
@@ -236,6 +237,20 @@ class TableInterpretationSpecTests(unittest.TestCase):
         self.assertIn("caption", spec.crop_policy_id)
         self.assertIn("context", spec.crop_policy_id)
         self.assertEqual(("run", "payload", "TableInterpretation"), spec.allowed_write_back)
+
+
+class SectionLabelObservationSpecTests(unittest.TestCase):
+    """section_label_observation binds cross-section label observations."""
+
+    def test_section_label_observation_spec(self) -> None:
+        spec = section_label_observation_spec()
+        self.assertIs(RecognitionTaskType.SECTION_LABEL_OBSERVATION, spec.task_type)
+        self.assertEqual(("CrossSection", "BlockCaption"), spec.allowed_target_types)
+        self.assertEqual(("raw_label", "normalized_label"), spec.required_outputs)
+        self.assertTrue(spec.crop_policy_id.startswith("crop/"))
+        self.assertIn("local", spec.crop_policy_id)
+        self.assertEqual(("run", "payload", "TextObservation"), spec.allowed_write_back)
+        self.assertNotIn("match", " ".join(spec.allowed_write_back))
 
 
 if __name__ == "__main__":

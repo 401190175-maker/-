@@ -249,6 +249,33 @@ def table_interpretation_spec() -> RecognitionTaskSpec:
     )
 
 
+def section_label_observation_spec() -> RecognitionTaskSpec:
+    """Return the section_label_observation task contract.
+
+    The task reads a CrossSection or BlockCaption local crop and returns raw
+    and normalized label observations. Results may only be written as
+    TextObservation; matching relations are never written by this task.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.SECTION_LABEL_OBSERVATION,
+        allowed_target_types=("CrossSection", "BlockCaption"),
+        required_context_types=(),
+        prompt_template_id="prompt/section-label-observation",
+        prompt_version="prompt-v1",
+        input_contract_id="input/section-label-observation",
+        input_contract_version="1",
+        output_schema_id="output/section-label-observation",
+        output_contract_version="1",
+        crop_policy_id="crop/section-label-local-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("raw_label", "normalized_label"),
+        allow_structure_repair=False,
+        allowed_write_back=("run", "payload", "TextObservation"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -285,5 +312,6 @@ __all__ = (
     "block_semantic_identification_spec",
     "element_text_observation_spec",
     "page_summary_spec",
+    "section_label_observation_spec",
     "table_interpretation_spec",
 )
