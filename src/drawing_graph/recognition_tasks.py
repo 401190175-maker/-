@@ -196,6 +196,33 @@ def block_semantic_identification_spec() -> RecognitionTaskSpec:
     )
 
 
+def basic_info_interpretation_spec() -> RecognitionTaskSpec:
+    """Return the basic_info_interpretation task contract.
+
+    The task reads one DrawingBasicInfo local crop and produces raw text,
+    a summary and existing structured fields; it never introduces new source
+    facts.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.BASIC_INFO_INTERPRETATION,
+        allowed_target_types=("DrawingBasicInfo",),
+        required_context_types=(),
+        prompt_template_id="prompt/basic-info-interpretation",
+        prompt_version="prompt-v1",
+        input_contract_id="input/basic-info-interpretation",
+        input_contract_version="1",
+        output_schema_id="output/basic-info-interpretation",
+        output_contract_version="1",
+        crop_policy_id="crop/basic-info-local-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("raw_text", "summary"),
+        allow_structure_repair=False,
+        allowed_write_back=("run", "payload", "BasicInfoInterpretation", "TextObservation"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -228,6 +255,7 @@ def _require_text(value: Any, field_name: str) -> str:
 __all__ = (
     "RecognitionTaskRegistry",
     "RecognitionTaskSpec",
+    "basic_info_interpretation_spec",
     "block_semantic_identification_spec",
     "element_text_observation_spec",
     "page_summary_spec",
