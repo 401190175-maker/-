@@ -1,0 +1,148 @@
+"""Immutable recognition task registry and task-specific contract specs."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from .recognition_models import RecognitionTaskType
+from .tool_models import ToolModelError
+
+
+@dataclass(frozen=True)
+class RecognitionTaskSpec:
+    """One immutable, versioned task contract for the 04 execution layer.
+
+    A spec binds the task type, allowed targets, prompt, input/output
+    contracts, crop policy, required outputs, structure-repair permission and
+    write-back declarations into one versioned unit. It never accesses
+    providers, filesystems, databases or environment variables.
+    """
+
+    task_type: RecognitionTaskType | str
+    allowed_target_types: tuple[str, ...]
+    required_context_types: tuple[str, ...] = ()
+    prompt_template_id: str = ""
+    prompt_version: str = ""
+    input_contract_id: str = ""
+    input_contract_version: str = ""
+    output_schema_id: str = ""
+    output_contract_version: str = ""
+    crop_policy_id: str = ""
+    preprocessing_version: str = "preprocess-v1"
+    max_targets_per_request: int = 1
+    required_outputs: tuple[str, ...] = ()
+    allow_structure_repair: bool = False
+    allowed_write_back: tuple[str, ...] = ("run", "payload")
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task_type", _coerce_task_type(self.task_type))
+        object.__setattr__(
+            self,
+            "allowed_target_types",
+            _read_unique_text_tuple(self.allowed_target_types, "allowed_target_types", allow_empty=False),
+        )
+        object.__setattr__(
+            self,
+            "required_context_types",
+            _read_unique_text_tuple(self.required_context_types, "required_context_types", allow_empty=True),
+        )
+        object.__setattr__(
+            self,
+            "required_outputs",
+            _read_unique_text_tuple(self.required_outputs, "required_outputs", allow_empty=False),
+        )
+        for field_name in (
+            "prompt_template_id",
+            "prompt_version",
+            "input_contract_id",
+            "input_contract_version",
+            "output_schema_id",
+            "output_contract_version",
+            "crop_policy_id",
+            "preprocessing_version",
+        ):
+            _require_text(getattr(self, field_name), field_name)
+        if not isinstance(self.max_targets_per_request, int) or isinstance(self.max_targets_per_request, bool):
+            raise ToolModelError("invalid_spec", "max_targets_per_request must be an integer")
+        if self.max_targets_per_request < 1:
+            raise ToolModelError("invalid_spec", "max_targets_per_request must be a positive integer")
+        if not isinstance(self.allow_structure_repair, bool):
+            raise ToolModelError("invalid_spec", "allow_structure_repair must be a boolean")
+        object.__setattr__(
+            self,
+            "allowed_write_back",
+            _read_unique_text_tuple(self.allowed_write_back, "allowed_write_back", allow_empty=False),
+        )
+        if "run" not in self.allowed_write_back or "payload" not in self.allowed_write_back:
+            raise ToolModelError("invalid_spec", "allowed_write_back must include run and payload")
+
+
+@dataclass(frozen=True)
+class RecognitionTaskRegistry:
+    """Immutable registry of recognition task specs with stable ordering."""
+
+    specs: tuple[RecognitionTaskSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.specs, tuple) or not all(
+            isinstance(spec, RecognitionTaskSpec) for spec in self.specs
+        ):
+            raise ToolModelError("invalid_registry", "specs must be a tuple of RecognitionTaskSpec")
+        seen: set[RecognitionTaskType] = set()
+        for spec in self.specs:
+            if spec.task_type in seen:
+                raise ToolModelError("invalid_registry", "task registry must not contain duplicate task types")
+            seen.add(spec.task_type)
+
+    def get(self, task_type: RecognitionTaskType | str) -> RecognitionTaskSpec:
+        """Return one registered spec or raise a classified not-found error."""
+
+        wanted = _coerce_task_type(task_type)
+        for spec in self.specs:
+            if spec.task_type is wanted:
+                return spec
+        raise ToolModelError("NOT_FOUND", "recognition task spec was not found")
+
+    def list_specs(self) -> tuple[RecognitionTaskSpec, ...]:
+        """Return all specs in stable registration order."""
+
+        return self.specs
+
+    def validate_registry(self) -> None:
+        """Validate registry-level integrity; raises on any violation."""
+
+        if not self.specs:
+            raise ToolModelError("invalid_registry", "task registry must contain at least one task spec")
+
+
+def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
+    try:
+        return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
+    except ValueError as exc:
+        raise ToolModelError("invalid_task_type", "unsupported recognition task type") from exc
+
+
+def _read_unique_text_tuple(values: Any, field_name: str, *, allow_empty: bool) -> tuple[str, ...]:
+    if isinstance(values, (str, bytes)) or not isinstance(values, (list, tuple)):
+        raise ToolModelError("invalid_sequence", f"{field_name} must be a sequence of strings")
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _require_text(value, field_name)
+        if text in seen:
+            raise ToolModelError("invalid_sequence", f"{field_name} must not contain duplicate values")
+        seen.add(text)
+        result.append(text)
+    if not allow_empty and not result:
+        raise ToolModelError("invalid_sequence", f"{field_name} must not be empty")
+    return tuple(result)
+
+
+def _require_text(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ToolModelError("missing_required_field", f"{field_name} must be a non-empty string")
+    return value.strip()
+
+
+__all__ = ("RecognitionTaskRegistry", "RecognitionTaskSpec")
