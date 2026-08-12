@@ -116,6 +116,33 @@ class RecognitionTaskRegistry:
             raise ToolModelError("invalid_registry", "task registry must contain at least one task spec")
 
 
+def page_summary_spec() -> RecognitionTaskSpec:
+    """Return the page_summary task contract.
+
+    The task reads the whole page through a controlled resize, produces a
+    summary plus key elements and uncertainties, and never declares a new
+    graph node in this phase.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.PAGE_SUMMARY,
+        allowed_target_types=("DrawingPage",),
+        required_context_types=(),
+        prompt_template_id="prompt/page-summary",
+        prompt_version="prompt-v1",
+        input_contract_id="input/page-summary",
+        input_contract_version="1",
+        output_schema_id="output/page-summary",
+        output_contract_version="1",
+        crop_policy_id="crop/page-summary-full-page-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("summary", "key_elements", "uncertainties"),
+        allow_structure_repair=False,
+        allowed_write_back=("run", "payload"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -145,4 +172,4 @@ def _require_text(value: Any, field_name: str) -> str:
     return value.strip()
 
 
-__all__ = ("RecognitionTaskRegistry", "RecognitionTaskSpec")
+__all__ = ("RecognitionTaskRegistry", "RecognitionTaskSpec", "page_summary_spec")

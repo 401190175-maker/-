@@ -7,7 +7,11 @@ import unittest
 from dataclasses import replace
 
 from drawing_graph.recognition_models import RecognitionTaskType
-from drawing_graph.recognition_tasks import RecognitionTaskRegistry, RecognitionTaskSpec
+from drawing_graph.recognition_tasks import (
+    RecognitionTaskRegistry,
+    RecognitionTaskSpec,
+    page_summary_spec,
+)
 from drawing_graph.tool_models import ToolModelError
 
 
@@ -146,6 +150,27 @@ class RecognitionTaskRegistryTests(unittest.TestCase):
         )
         for forbidden in ("neo4j", "repository", "cypher", "httpx", "qwen", "facade", "os.environ", "pathlib"):
             self.assertNotIn(forbidden, import_lines)
+
+
+class PageSummarySpecTests(unittest.TestCase):
+    """page_summary binds the full-page controlled-resize contract."""
+
+    def test_page_summary_spec(self) -> None:
+        spec = page_summary_spec()
+        self.assertIs(RecognitionTaskType.PAGE_SUMMARY, spec.task_type)
+        self.assertEqual(("DrawingPage",), spec.allowed_target_types)
+        self.assertEqual(("summary", "key_elements", "uncertainties"), spec.required_outputs)
+        self.assertTrue(spec.crop_policy_id.startswith("crop/"))
+        self.assertIn("full-page", spec.crop_policy_id)
+        self.assertEqual(("run", "payload"), spec.allowed_write_back)
+        self.assertNotIn("PageInterpretation", spec.allowed_write_back)
+        self.assertTrue(spec.prompt_template_id)
+        self.assertTrue(spec.prompt_version)
+        self.assertTrue(spec.input_contract_id)
+        self.assertTrue(spec.input_contract_version)
+        self.assertTrue(spec.output_schema_id)
+        self.assertTrue(spec.output_contract_version)
+        self.assertGreaterEqual(spec.max_targets_per_request, 1)
 
 
 if __name__ == "__main__":
