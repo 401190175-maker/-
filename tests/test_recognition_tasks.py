@@ -12,6 +12,7 @@ from drawing_graph.recognition_tasks import (
     RecognitionTaskSpec,
     basic_info_interpretation_spec,
     block_semantic_identification_spec,
+    build_default_task_registry,
     element_text_observation_spec,
     page_summary_spec,
     relation_evidence_extraction_spec,
@@ -268,6 +269,66 @@ class RelationEvidenceExtractionSpecTests(unittest.TestCase):
         self.assertIn("primary", spec.crop_policy_id)
         self.assertIn("context", spec.crop_policy_id)
         self.assertEqual(("run", "payload"), spec.allowed_write_back)
+
+
+class RecognitionTaskRegistryIntegrityTests(unittest.TestCase):
+    """Registry-level contracts guarantee seven complete, non-overlapping tasks."""
+
+    def test_default_registry_contains_exactly_seven_tasks(self) -> None:
+        registry = build_default_task_registry()
+        specs = registry.list_specs()
+        self.assertEqual(7, len(specs))
+        self.assertEqual(
+            {
+                "page_summary",
+                "element_text_observation",
+                "block_semantic_identification",
+                "basic_info_interpretation",
+                "table_interpretation",
+                "section_label_observation",
+                "relation_evidence_extraction",
+            },
+            {spec.task_type.value for spec in specs},
+        )
+        for task_type in RecognitionTaskType:
+            self.assertIsNotNone(registry.get(task_type))
+
+    def test_all_specs_have_non_empty_versioned_identifiers(self) -> None:
+        for spec in build_default_task_registry().list_specs():
+            with self.subTest(task=spec.task_type.value):
+                for field_name in (
+                    "prompt_template_id",
+                    "prompt_version",
+                    "input_contract_id",
+                    "input_contract_version",
+                    "output_schema_id",
+                    "output_contract_version",
+                    "crop_policy_id",
+                    "preprocessing_version",
+                ):
+                    self.assertTrue(getattr(spec, field_name), f"{field_name} must be non-empty")
+
+    def test_default_registry_enumeration_is_deterministic(self) -> None:
+        first = build_default_task_registry().list_specs()
+        second = build_default_task_registry().list_specs()
+        self.assertEqual(tuple(spec.task_type for spec in first), tuple(spec.task_type for spec in second))
+
+    def test_page_summary_target_whitelist_is_not_shared(self) -> None:
+        for spec in build_default_task_registry().list_specs():
+            if spec.task_type is RecognitionTaskType.PAGE_SUMMARY:
+                continue
+            self.assertNotIn("DrawingPage", spec.allowed_target_types)
+
+    def test_required_outputs_are_task_specific(self) -> None:
+        output_sets = {
+            spec.task_type: tuple(spec.required_outputs) for spec in build_default_task_registry().list_specs()
+        }
+        self.assertEqual(7, len(output_sets))
+        self.assertEqual(7, len({tuple(value) for value in output_sets.values()}))
+
+    def test_default_registry_passes_validation(self) -> None:
+        registry = build_default_task_registry()
+        self.assertIsNone(registry.validate_registry())
 
 
 if __name__ == "__main__":

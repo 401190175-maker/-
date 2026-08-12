@@ -311,6 +311,22 @@ def relation_evidence_extraction_spec() -> RecognitionTaskSpec:
     )
 
 
+def build_default_task_registry() -> RecognitionTaskRegistry:
+    """Build the first-version registry with all seven stable task specs."""
+
+    return RecognitionTaskRegistry(
+        specs=(
+            page_summary_spec(),
+            element_text_observation_spec(),
+            block_semantic_identification_spec(),
+            basic_info_interpretation_spec(),
+            table_interpretation_spec(),
+            section_label_observation_spec(),
+            relation_evidence_extraction_spec(),
+        )
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -345,6 +361,7 @@ __all__ = (
     "RecognitionTaskSpec",
     "basic_info_interpretation_spec",
     "block_semantic_identification_spec",
+    "build_default_task_registry",
     "element_text_observation_spec",
     "page_summary_spec",
     "relation_evidence_extraction_spec",
