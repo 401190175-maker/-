@@ -14,6 +14,7 @@ from drawing_graph.recognition_tasks import (
     block_semantic_identification_spec,
     element_text_observation_spec,
     page_summary_spec,
+    table_interpretation_spec,
 )
 from drawing_graph.tool_models import ToolModelError
 
@@ -219,6 +220,22 @@ class BasicInfoInterpretationSpecTests(unittest.TestCase):
         self.assertIn("local", spec.crop_policy_id)
         self.assertEqual(("run", "payload", "BasicInfoInterpretation", "TextObservation"), spec.allowed_write_back)
         self.assertNotIn("source_fact", spec.allowed_write_back)
+
+
+class TableInterpretationSpecTests(unittest.TestCase):
+    """table_interpretation binds Table local crop plus caption context."""
+
+    def test_table_interpretation_spec(self) -> None:
+        spec = table_interpretation_spec()
+        self.assertIs(RecognitionTaskType.TABLE_INTERPRETATION, spec.task_type)
+        self.assertEqual(("Table",), spec.allowed_target_types)
+        self.assertEqual(("TableCaption",), spec.required_context_types)
+        self.assertEqual(("summary", "caption_ref", "uncertainties"), spec.required_outputs)
+        self.assertTrue(spec.crop_policy_id.startswith("crop/"))
+        self.assertIn("local", spec.crop_policy_id)
+        self.assertIn("caption", spec.crop_policy_id)
+        self.assertIn("context", spec.crop_policy_id)
+        self.assertEqual(("run", "payload", "TableInterpretation"), spec.allowed_write_back)
 
 
 if __name__ == "__main__":

@@ -223,6 +223,32 @@ def basic_info_interpretation_spec() -> RecognitionTaskSpec:
     )
 
 
+def table_interpretation_spec() -> RecognitionTaskSpec:
+    """Return the table_interpretation task contract.
+
+    The task reads one Table local crop with a limited same-page TableCaption
+    context and produces a summary, caption reference and uncertainties.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.TABLE_INTERPRETATION,
+        allowed_target_types=("Table",),
+        required_context_types=("TableCaption",),
+        prompt_template_id="prompt/table-interpretation",
+        prompt_version="prompt-v1",
+        input_contract_id="input/table-interpretation",
+        input_contract_version="1",
+        output_schema_id="output/table-interpretation",
+        output_contract_version="1",
+        crop_policy_id="crop/table-local-caption-context-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("summary", "caption_ref", "uncertainties"),
+        allow_structure_repair=False,
+        allowed_write_back=("run", "payload", "TableInterpretation"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -259,4 +285,5 @@ __all__ = (
     "block_semantic_identification_spec",
     "element_text_observation_spec",
     "page_summary_spec",
+    "table_interpretation_spec",
 )
