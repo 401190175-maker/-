@@ -10,6 +10,7 @@ from drawing_graph.recognition_models import RecognitionTaskType
 from drawing_graph.recognition_tasks import (
     RecognitionTaskRegistry,
     RecognitionTaskSpec,
+    element_text_observation_spec,
     page_summary_spec,
 )
 from drawing_graph.tool_models import ToolModelError
@@ -171,6 +172,22 @@ class PageSummarySpecTests(unittest.TestCase):
         self.assertTrue(spec.output_schema_id)
         self.assertTrue(spec.output_contract_version)
         self.assertGreaterEqual(spec.max_targets_per_request, 1)
+
+
+class ElementTextObservationSpecTests(unittest.TestCase):
+    """element_text_observation forces local crops for text elements."""
+
+    def test_element_text_observation_spec(self) -> None:
+        spec = element_text_observation_spec()
+        self.assertIs(RecognitionTaskType.ELEMENT_TEXT_OBSERVATION, spec.task_type)
+        self.assertEqual(
+            ("BlockCaption", "TableCaption", "PlainText", "Title", "DrawingAnnotation"),
+            spec.allowed_target_types,
+        )
+        self.assertEqual(("observations",), spec.required_outputs)
+        self.assertTrue(spec.crop_policy_id.startswith("crop/"))
+        self.assertIn("local", spec.crop_policy_id)
+        self.assertEqual(("run", "payload", "TextObservation"), spec.allowed_write_back)
 
 
 if __name__ == "__main__":

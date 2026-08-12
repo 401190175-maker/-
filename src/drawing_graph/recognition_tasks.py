@@ -143,6 +143,32 @@ def page_summary_spec() -> RecognitionTaskSpec:
     )
 
 
+def element_text_observation_spec() -> RecognitionTaskSpec:
+    """Return the element_text_observation task contract.
+
+    The task reads one text element's local crop and produces text
+    observations; the only graph evidence it may write is TextObservation.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.ELEMENT_TEXT_OBSERVATION,
+        allowed_target_types=("BlockCaption", "TableCaption", "PlainText", "Title", "DrawingAnnotation"),
+        required_context_types=(),
+        prompt_template_id="prompt/element-text-observation",
+        prompt_version="prompt-v1",
+        input_contract_id="input/element-text-observation",
+        input_contract_version="1",
+        output_schema_id="output/element-text-observation",
+        output_contract_version="1",
+        crop_policy_id="crop/element-text-local-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("observations",),
+        allow_structure_repair=False,
+        allowed_write_back=("run", "payload", "TextObservation"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -172,4 +198,9 @@ def _require_text(value: Any, field_name: str) -> str:
     return value.strip()
 
 
-__all__ = ("RecognitionTaskRegistry", "RecognitionTaskSpec", "page_summary_spec")
+__all__ = (
+    "RecognitionTaskRegistry",
+    "RecognitionTaskSpec",
+    "element_text_observation_spec",
+    "page_summary_spec",
+)
