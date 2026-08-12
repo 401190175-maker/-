@@ -14,6 +14,7 @@ from drawing_graph.recognition_tasks import (
     block_semantic_identification_spec,
     element_text_observation_spec,
     page_summary_spec,
+    relation_evidence_extraction_spec,
     section_label_observation_spec,
     table_interpretation_spec,
 )
@@ -251,6 +252,22 @@ class SectionLabelObservationSpecTests(unittest.TestCase):
         self.assertIn("local", spec.crop_policy_id)
         self.assertEqual(("run", "payload", "TextObservation"), spec.allowed_write_back)
         self.assertNotIn("match", " ".join(spec.allowed_write_back))
+
+
+class RelationEvidenceExtractionSpecTests(unittest.TestCase):
+    """relation_evidence_extraction only produces candidate evidence."""
+
+    def test_relation_evidence_extraction_spec(self) -> None:
+        spec = relation_evidence_extraction_spec()
+        self.assertIs(RecognitionTaskType.RELATION_EVIDENCE_EXTRACTION, spec.task_type)
+        self.assertEqual(("DrawingBlock", "CrossSection", "Table"), spec.allowed_target_types)
+        self.assertIn("BlockCaption", spec.required_context_types)
+        self.assertEqual(("candidate_evidence", "supporting_ids"), spec.required_outputs)
+        self.assertEqual(1, spec.max_targets_per_request)
+        self.assertTrue(spec.crop_policy_id.startswith("crop/"))
+        self.assertIn("primary", spec.crop_policy_id)
+        self.assertIn("context", spec.crop_policy_id)
+        self.assertEqual(("run", "payload"), spec.allowed_write_back)
 
 
 if __name__ == "__main__":

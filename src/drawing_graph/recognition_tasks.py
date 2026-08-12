@@ -276,6 +276,41 @@ def section_label_observation_spec() -> RecognitionTaskSpec:
     )
 
 
+def relation_evidence_extraction_spec() -> RecognitionTaskSpec:
+    """Return the relation_evidence_extraction task contract.
+
+    The task reads one primary target crop with a limited same-page context
+    whitelist and produces only candidate evidence plus supporting IDs. It
+    never writes candidate or formal graph edges.
+    """
+
+    return RecognitionTaskSpec(
+        task_type=RecognitionTaskType.RELATION_EVIDENCE_EXTRACTION,
+        allowed_target_types=("DrawingBlock", "CrossSection", "Table"),
+        required_context_types=(
+            "DrawingBlock",
+            "BlockCaption",
+            "CrossSection",
+            "TableCaption",
+            "PlainText",
+            "DrawingAnnotation",
+            "Title",
+        ),
+        prompt_template_id="prompt/relation-evidence-extraction",
+        prompt_version="prompt-v1",
+        input_contract_id="input/relation-evidence-extraction",
+        input_contract_version="1",
+        output_schema_id="output/relation-evidence-extraction",
+        output_contract_version="1",
+        crop_policy_id="crop/relation-primary-local-context-v1",
+        preprocessing_version="preprocess-v1",
+        max_targets_per_request=1,
+        required_outputs=("candidate_evidence", "supporting_ids"),
+        allow_structure_repair=False,
+        allowed_write_back=("run", "payload"),
+    )
+
+
 def _coerce_task_type(value: RecognitionTaskType | str) -> RecognitionTaskType:
     try:
         return value if isinstance(value, RecognitionTaskType) else RecognitionTaskType(value)
@@ -312,6 +347,7 @@ __all__ = (
     "block_semantic_identification_spec",
     "element_text_observation_spec",
     "page_summary_spec",
+    "relation_evidence_extraction_spec",
     "section_label_observation_spec",
     "table_interpretation_spec",
 )
