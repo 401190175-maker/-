@@ -14,7 +14,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from .tool_models import SemanticTargetInput, ToolModelError
+from .tool_models import BBox, SemanticTargetInput, ToolModelError
 
 
 class RecognitionTaskType(str, Enum):
@@ -200,6 +200,7 @@ class ValidatedRecognitionRequest:
     image_path: str | None = field(default=None, repr=False)
     image_size: tuple[int, int] | None = None
     execution_policy: RecognitionExecutionPolicy | None = None
+    context_elements: tuple[ContextElementRef, ...] = ()
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -231,6 +232,31 @@ class ValidatedRecognitionRequest:
                 raise ToolModelError("invalid_image_size", "image_size must be a positive (width, height) tuple")
         if self.execution_policy is not None and not isinstance(self.execution_policy, RecognitionExecutionPolicy):
             raise ToolModelError("invalid_policy", "execution_policy must be a RecognitionExecutionPolicy or None")
+        _require_tuple_of(self.context_elements, ContextElementRef, "context_elements")
+
+
+@dataclass(frozen=True)
+class ContextElementRef:
+    """Stable reference to one validated same-page context element."""
+
+    element_id: str
+    element_type: str
+    bbox: BBox
+    normalized_bbox: BBox
+
+    def __post_init__(self) -> None:
+        _require_text(self.element_id, "element_id")
+        _require_text(self.element_type, "element_type")
+        if not isinstance(self.bbox, BBox) or not isinstance(self.normalized_bbox, BBox):
+            raise ToolModelError("invalid_bbox", "bbox and normalized_bbox must be BBox instances")
+        for coordinate in (
+            self.normalized_bbox.x_min,
+            self.normalized_bbox.y_min,
+            self.normalized_bbox.x_max,
+            self.normalized_bbox.y_max,
+        ):
+            if not 0 <= coordinate <= 1:
+                raise ToolModelError("invalid_normalized_bbox", "normalized_bbox values must be between 0 and 1")
 
 
 @dataclass(frozen=True)
@@ -536,6 +562,7 @@ def _require_non_negative_number(value: Any, field_name: str) -> None:
 
 
 __all__ = (
+    "ContextElementRef",
     "CostStatus",
     "ProviderErrorCategory",
     "RecognitionAttempt",

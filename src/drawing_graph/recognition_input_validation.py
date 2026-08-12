@@ -6,6 +6,7 @@ import math
 from typing import Any
 
 from .recognition_models import (
+    ContextElementRef,
     RecognitionExecutionPolicy,
     RecognitionExecutionRequest,
     RecognitionTaskType,
@@ -63,6 +64,7 @@ class RecognitionInputValidator:
             _validate_target_spatial(target, page_facts, task_spec, task_type, element)
             _validate_context(target, page_facts, task_spec)
             validated_targets.append(target)
+        context_refs = _build_context_refs(request, page_facts)
 
         return ValidatedRecognitionRequest(
             request_id=request.request_id,
@@ -80,6 +82,7 @@ class RecognitionInputValidator:
             image_path=page_facts.image_path,
             image_size=page_facts.image_size,
             execution_policy=request.execution_policy,
+            context_elements=context_refs,
         )
 
 
@@ -260,6 +263,31 @@ def _validate_context(
                 "context_type_not_allowed",
                 f"context element type {element.element_type!r} is not allowed by the task",
             )
+
+
+def _build_context_refs(
+    request: RecognitionExecutionRequest,
+    page_facts: PageSourceFacts,
+) -> tuple[ContextElementRef, ...]:
+    refs: list[ContextElementRef] = []
+    seen: set[str] = set()
+    for target in request.targets:
+        for context_id in target.context_element_ids:
+            if context_id in seen:
+                continue
+            seen.add(context_id)
+            element = _find_element(page_facts, context_id)
+            if element is None:
+                continue
+            refs.append(
+                ContextElementRef(
+                    element_id=element.element_id,
+                    element_type=element.element_type,
+                    bbox=element.bbox,
+                    normalized_bbox=element.normalized_bbox,
+                )
+            )
+    return tuple(refs)
 
 
 def _validate_safe_fields(request: RecognitionExecutionRequest) -> None:

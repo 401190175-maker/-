@@ -17,6 +17,7 @@ from drawing_graph.recognition_image_preprocessing import (
     RegionImagePreprocessor,
 )
 from drawing_graph.recognition_models import (
+    ContextElementRef,
     RecognitionExecutionRequest,
     RecognitionImageRole,
     RecognitionTaskType,
@@ -26,6 +27,7 @@ from drawing_graph.recognition_tasks import (
     block_semantic_identification_spec,
     element_text_observation_spec,
     page_summary_spec,
+    table_interpretation_spec,
 )
 from drawing_graph.tool_models import BBox, SemanticTargetInput
 
@@ -70,6 +72,7 @@ def _validated_request(
     task_type: str = "block_semantic_identification",
     targets: tuple[SemanticTargetInput, ...] | None = None,
     image_size: tuple[int, int] = (100, 80),
+    context_elements: tuple[ContextElementRef, ...] = (),
 ) -> ValidatedRecognitionRequest:
     return ValidatedRecognitionRequest(
         request_id="req-1",
@@ -86,6 +89,7 @@ def _validated_request(
         deadline_seconds=60.0,
         image_path=image_path,
         image_size=image_size,
+        context_elements=context_elements,
     )
 
 
@@ -224,6 +228,167 @@ class RegionCropTests(unittest.TestCase):
         )
         for forbidden in ("neo4j", "repository", "cypher", "httpx", "qwen", "facade", "os.environ", "pathlib"):
             self.assertNotIn(forbidden, import_lines)
+
+
+class ImageSafetyTests(unittest.TestCase):
+    """Orientation, controlled resize and fail-closed resource limits."""
+
+    def test_page_summary_uses_controlled_resize(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            image = RegionImagePreprocessor(max_prepared_side=50).prepare(
+                _validated_request(str(source), task_type="page_summary", targets=(_page_target(),)),
+                page_summary_spec(),
+            )[0]
+            self.assertEqual((50, 40), image.output_size)
+            self.assertEqual(2.0, image.scale)
+
+    def test_local_crop_resizes_when_side_limit_exceeded(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            image = RegionImagePreprocessor(max_prepared_side=40).prepare(
+                _validated_request(str(source)),
+                block_semantic_identification_spec(),
+            )[0]
+            self.assertLessEqual(image.output_size[0], 40)
+            self.assertLessEqual(image.output_size[1], 40)
+            self.assertGreater(image.scale, 1.0)
+
+    def test_max_image_bytes_is_fail_closed(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            with self.assertRaises(RecognitionImageError):
+                RegionImagePreprocessor(max_image_bytes=10).prepare(
+                    _validated_request(str(source)),
+                    block_semantic_identification_spec(),
+                )
+
+    def test_max_image_pixels_is_fail_closed(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            with self.assertRaises(RecognitionImageError):
+                RegionImagePreprocessor(max_image_pixels=1000).prepare(
+                    _validated_request(str(source)),
+                    block_semantic_identification_spec(),
+                )
+
+    def test_max_crop_area_is_fail_closed(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            with self.assertRaises(RecognitionImageError):
+                RegionImagePreprocessor(max_crop_area=100).prepare(
+                    _validated_request(str(source)),
+                    block_semantic_identification_spec(),
+                )
+
+    def test_corrupted_image_is_rejected(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "broken.png"
+            source.write_bytes(b"not an image")
+            with self.assertRaises(RecognitionImageError):
+                RegionImagePreprocessor().prepare(
+                    _validated_request(str(source)),
+                    block_semantic_identification_spec(),
+                )
+
+    def test_exif_orientation_is_normalized(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.jpg"
+            image = Image.new("RGB", (100, 80), "white")
+            exif = Image.Exif()
+            exif[0x0112] = 6
+            image.save(source, format="JPEG", exif=exif)
+            prepared = RegionImagePreprocessor().prepare(
+                _validated_request(
+                    str(source),
+                    task_type="page_summary",
+                    targets=(_page_target(),),
+                    image_size=(100, 80),
+                ),
+                page_summary_spec(),
+            )[0]
+            self.assertEqual((80, 100), prepared.output_size)
+            self.assertEqual((80, 100), prepared.source_size)
+
+    def test_context_image_uses_low_resolution_version(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source, size=(500, 200))
+            target = SemanticTargetInput(
+                target_id="target-table",
+                page_id="page-1",
+                target_type="Table",
+                task_type="table_interpretation",
+                target_element_id="table-1",
+                bbox=BBox(10, 10, 200, 100),
+                normalized_bbox=BBox(0.02, 0.05, 0.4, 0.5),
+                context_element_ids=("caption-1",),
+            )
+            context_ref = ContextElementRef(
+                element_id="caption-1",
+                element_type="TableCaption",
+                bbox=BBox(300, 10, 400, 30),
+                normalized_bbox=BBox(0.6, 0.05, 0.8, 0.15),
+            )
+            request = _validated_request(
+                str(source),
+                task_type="table_interpretation",
+                targets=(target,),
+                image_size=(500, 200),
+                context_elements=(context_ref,),
+            )
+            prepared = RegionImagePreprocessor(context_side=32).prepare(request, table_interpretation_spec())
+            self.assertEqual(2, len(prepared))
+            self.assertIs(RecognitionImageRole.TARGET, prepared[0].role)
+            self.assertIs(RecognitionImageRole.CONTEXT, prepared[1].role)
+            self.assertLessEqual(prepared[1].output_size[0], 32)
+            self.assertLessEqual(prepared[1].output_size[1], 32)
+            self.assertEqual(BBox(300, 10, 400, 30), prepared[1].crop_bbox)
+
+    def test_source_path_is_not_exposed_in_error_or_dto(self) -> None:
+        with _fixture_dir() as tmp:
+            missing = Path(tmp) / "secret-folder" / "missing.png"
+            with self.assertRaises(RecognitionImageError) as caught:
+                RegionImagePreprocessor().prepare(
+                    _validated_request(str(missing)),
+                    block_semantic_identification_spec(),
+                )
+            self.assertNotIn("secret-folder", str(caught.exception))
+            self.assertNotIn("missing.png", str(caught.exception))
+
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            prepared = RegionImagePreprocessor().prepare(
+                _validated_request(str(source)),
+                block_semantic_identification_spec(),
+            )[0]
+            self.assertNotIn("page-1.png", repr(prepared))
+
+    def test_limit_parameters_must_be_positive(self) -> None:
+        for kwargs in (
+            {"max_image_bytes": 0},
+            {"max_image_pixels": -1},
+            {"max_prepared_side": 0},
+            {"max_crop_area": -5},
+            {"context_side": 0},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(RecognitionImageError):
+                    RegionImagePreprocessor(**kwargs)
+
+
+def _page_target() -> SemanticTargetInput:
+    return SemanticTargetInput(
+        target_id="target-page",
+        page_id="page-1",
+        target_type="DrawingPage",
+        task_type="page_summary",
+    )
 
 
 if __name__ == "__main__":
