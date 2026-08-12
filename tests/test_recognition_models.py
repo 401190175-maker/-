@@ -8,11 +8,15 @@ from drawing_graph.recognition_models import (
     CostStatus,
     ProviderErrorCategory,
     RecognitionAttemptStatus,
+    RecognitionExecutionPolicy,
+    RecognitionExecutionRequest,
     RecognitionExecutionStatus,
     RecognitionImageRole,
     RecognitionTaskType,
     UsageStatus,
+    ValidatedRecognitionRequest,
 )
+from drawing_graph.tool_models import SemanticTargetInput
 
 
 class RecognitionTaskTypeTests(unittest.TestCase):
@@ -156,6 +160,235 @@ class RecognitionModelPurityTests(unittest.TestCase):
         )
         for forbidden in ("neo4j", "repository", "cypher", "httpx", "qwen", "facade", "os.environ"):
             self.assertNotIn(forbidden, import_lines)
+
+
+class RecognitionExecutionPolicyTests(unittest.TestCase):
+    """RecognitionExecutionPolicy must reject illegal execution parameters."""
+
+    def test_default_policy_is_valid(self) -> None:
+        policy = RecognitionExecutionPolicy()
+        self.assertEqual(3, policy.max_attempts)
+        self.assertEqual(1, policy.structure_repair_attempts)
+        self.assertEqual(60.0, policy.deadline_seconds)
+        self.assertEqual(250, policy.base_backoff_ms)
+        self.assertEqual(2000, policy.max_backoff_ms)
+        self.assertEqual(0.1, policy.jitter_ratio)
+        self.assertIsNone(policy.estimated_cost_budget)
+
+    def test_valid_custom_policy(self) -> None:
+        policy = RecognitionExecutionPolicy(
+            max_attempts=2,
+            structure_repair_attempts=1,
+            deadline_seconds=30.0,
+            base_backoff_ms=100,
+            max_backoff_ms=500,
+            jitter_ratio=0.2,
+            estimated_cost_budget=0.5,
+        )
+        self.assertEqual(2, policy.max_attempts)
+        self.assertEqual(0.5, policy.estimated_cost_budget)
+
+    def test_max_attempts_must_be_positive(self) -> None:
+        for value in (0, -1):
+            with self.assertRaises(ValueError):
+                RecognitionExecutionPolicy(max_attempts=value)
+
+    def test_structure_repair_must_not_exceed_total_attempts(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionExecutionPolicy(max_attempts=2, structure_repair_attempts=2)
+
+    def test_negative_deadline_or_budget_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionExecutionPolicy(deadline_seconds=-1)
+        with self.assertRaises(ValueError):
+            RecognitionExecutionPolicy(estimated_cost_budget=-0.1)
+
+    def test_backoff_bounds_must_be_ordered(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionExecutionPolicy(base_backoff_ms=2000, max_backoff_ms=250)
+
+    def test_jitter_ratio_must_be_between_zero_and_one(self) -> None:
+        for value in (-0.1, 1.5):
+            with self.assertRaises(ValueError):
+                RecognitionExecutionPolicy(jitter_ratio=value)
+
+
+class RecognitionExecutionRequestTests(unittest.TestCase):
+    """RecognitionExecutionRequest is the pre-validation input contract."""
+
+    @staticmethod
+    def _target() -> SemanticTargetInput:
+        return SemanticTargetInput(
+            target_id="target-1",
+            page_id="page-1",
+            target_type="DrawingBlock",
+            task_type="block_semantic_identification",
+        )
+
+    def test_valid_minimal_request(self) -> None:
+        request = RecognitionExecutionRequest(
+            request_id="req-1",
+            recognition_run_id="run-1",
+            page_id="page-1",
+            task_type="block_semantic_identification",
+            targets=(self._target(),),
+            model_profile="default",
+            prompt_version="prompt-v1",
+        )
+        self.assertFalse(request.write_back)
+        self.assertEqual(60.0, request.deadline_seconds)
+        self.assertEqual("1", request.input_contract_version)
+        self.assertEqual("1", request.output_contract_version)
+        self.assertEqual("preprocess-v1", request.preprocessing_version)
+
+    def test_write_back_must_be_explicit_boolean(self) -> None:
+        request = RecognitionExecutionRequest(
+            request_id="req-1",
+            recognition_run_id="run-1",
+            page_id="page-1",
+            task_type="page_summary",
+            targets=(self._target(),),
+            model_profile="default",
+            prompt_version="prompt-v1",
+            write_back=True,
+        )
+        self.assertTrue(request.write_back)
+
+    def test_write_back_defaults_to_false(self) -> None:
+        request = RecognitionExecutionRequest(
+            request_id="req-1",
+            recognition_run_id="run-1",
+            page_id="page-1",
+            task_type="page_summary",
+            targets=(self._target(),),
+            model_profile="default",
+            prompt_version="prompt-v1",
+        )
+        self.assertIs(False, request.write_back)
+
+    def test_empty_required_text_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionExecutionRequest(
+                request_id="",
+                recognition_run_id="run-1",
+                page_id="page-1",
+                task_type="page_summary",
+                targets=(self._target(),),
+                model_profile="default",
+                prompt_version="prompt-v1",
+            )
+
+    def test_targets_must_be_non_empty_tuple_of_semantic_target_input(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionExecutionRequest(
+                request_id="req-1",
+                recognition_run_id="run-1",
+                page_id="page-1",
+                task_type="page_summary",
+                targets=(),
+                model_profile="default",
+                prompt_version="prompt-v1",
+            )
+        with self.assertRaises(ValueError):
+            RecognitionExecutionRequest(
+                request_id="req-1",
+                recognition_run_id="run-1",
+                page_id="page-1",
+                task_type="page_summary",
+                targets=("not-a-target",),
+                model_profile="default",
+                prompt_version="prompt-v1",
+            )
+
+    def test_negative_deadline_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionExecutionRequest(
+                request_id="req-1",
+                recognition_run_id="run-1",
+                page_id="page-1",
+                task_type="page_summary",
+                targets=(self._target(),),
+                model_profile="default",
+                prompt_version="prompt-v1",
+                deadline_seconds=-1,
+            )
+
+    def test_dto_rejects_unknown_secret_fields(self) -> None:
+        with self.assertRaises(TypeError):
+            RecognitionExecutionRequest(
+                request_id="req-1",
+                recognition_run_id="run-1",
+                page_id="page-1",
+                task_type="page_summary",
+                targets=(self._target(),),
+                model_profile="default",
+                prompt_version="prompt-v1",
+                api_key="secret",
+            )
+
+
+class ValidatedRecognitionRequestTests(unittest.TestCase):
+    """ValidatedRecognitionRequest is the post-validation internal projection."""
+
+    @staticmethod
+    def _target() -> SemanticTargetInput:
+        return SemanticTargetInput(
+            target_id="target-1",
+            page_id="page-1",
+            target_type="DrawingBlock",
+            task_type="block_semantic_identification",
+        )
+
+    def test_valid_projection(self) -> None:
+        request = ValidatedRecognitionRequest(
+            request_id="req-1",
+            recognition_run_id="run-1",
+            page_id="page-1",
+            task_type=RecognitionTaskType.BLOCK_SEMANTIC_IDENTIFICATION,
+            targets=(self._target(),),
+            model_profile="default",
+            prompt_version="prompt-v1",
+            input_contract_version="1",
+            output_contract_version="1",
+            preprocessing_version="preprocess-v1",
+            write_back=False,
+            deadline_seconds=60.0,
+            image_path=r"C:\drawings\page-1.png",
+            image_size=(1000, 800),
+        )
+        self.assertEqual((1000, 800), request.image_size)
+
+    def test_repr_must_not_expose_internal_image_path(self) -> None:
+        request = ValidatedRecognitionRequest(
+            request_id="req-1",
+            recognition_run_id="run-1",
+            page_id="page-1",
+            task_type=RecognitionTaskType.PAGE_SUMMARY,
+            targets=(self._target(),),
+            model_profile="default",
+            prompt_version="prompt-v1",
+            input_contract_version="1",
+            output_contract_version="1",
+            preprocessing_version="preprocess-v1",
+            write_back=False,
+            deadline_seconds=60.0,
+            image_path=r"C:\secrets\drawings\page-1.png",
+        )
+        self.assertNotIn("secrets", repr(request))
+        self.assertNotIn("drawings", repr(request))
+
+    def test_write_back_defaults_to_false(self) -> None:
+        request = ValidatedRecognitionRequest(
+            request_id="req-1",
+            recognition_run_id="run-1",
+            page_id="page-1",
+            task_type=RecognitionTaskType.PAGE_SUMMARY,
+            targets=(self._target(),),
+            model_profile="default",
+            prompt_version="prompt-v1",
+            image_path=None,
+        )
+        self.assertIs(False, request.write_back)
 
 
 if __name__ == "__main__":
