@@ -52,12 +52,16 @@ def _target(task_type: str) -> SemanticTargetInput:
         "section_label_observation": "CrossSection",
         "relation_evidence_extraction": "DrawingBlock",
     }[task_type]
+    context_ids = ()
+    if task_type == "relation_evidence_extraction":
+        context_ids = ("caption-1",)
     return SemanticTargetInput(
         target_id="target-1",
         page_id="page-1",
         target_type=target_type,
         task_type=task_type,
         target_element_id="element-1",
+        context_element_ids=context_ids,
     )
 
 
@@ -194,7 +198,16 @@ class OutputSchemaTests(unittest.TestCase):
         validator = RecognitionOutputValidator()
         spec = build_default_task_registry().get("page_summary")
         request = _request("page_summary")
-        for status in ("ambiguous", "not_found", "partial", "succeeded"):
+        for status in ("ambiguous", "not_found"):
+            payload = {
+                "target_id": "target-page",
+                "target_type": "DrawingPage",
+                "status": status,
+            }
+            with self.subTest(status=status):
+                result = validator.validate(spec, request, payload)
+                self.assertEqual(status, result[0].status.value)
+        for status in ("partial", "succeeded"):
             payload = _valid_payload("page_summary")
             payload["status"] = status
             with self.subTest(status=status):
@@ -253,6 +266,92 @@ class OutputSchemaTests(unittest.TestCase):
         )
         for forbidden in ("neo4j", "repository", "cypher", "httpx", "qwen", "facade", "os.environ", "pathlib"):
             self.assertNotIn(forbidden, import_lines)
+
+
+class OutputAuthorityTests(unittest.TestCase):
+    """Outputs must bind to request targets and stay below formal facts."""
+
+    def _page_context(self):
+        return RecognitionOutputValidator(), build_default_task_registry(), _request("page_summary")
+
+    def test_target_not_in_request_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["target_id"] = "other-target"
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_target_type_mismatch_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["target_type"] = "DrawingBlock"
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_source_fact_declaration_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["source_fact"] = "confirmed"
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_nested_derived_relation_key_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["key_elements"] = [{"derived_relation": "HAS_CAPTION"}]
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_formal_declaration_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["formal_relation"] = "MATCHES_SECTION_CAPTION"
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_relation_supporting_ids_must_come_from_allowed_context(self) -> None:
+        validator = RecognitionOutputValidator()
+        registry = build_default_task_registry()
+        request = _request("relation_evidence_extraction")
+        payload = _valid_payload("relation_evidence_extraction")
+        payload["supporting_ids"] = ["outside-id"]
+        payload["candidate_evidence"][0]["supporting_ids"] = ["outside-id"]
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("relation_evidence_extraction"), request, payload)
+
+    def test_relation_evidence_entries_require_supporting_ids(self) -> None:
+        validator = RecognitionOutputValidator()
+        registry = build_default_task_registry()
+        request = _request("relation_evidence_extraction")
+        payload = _valid_payload("relation_evidence_extraction")
+        del payload["candidate_evidence"][0]["supporting_ids"]
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("relation_evidence_extraction"), request, payload)
+
+    def test_ambiguous_output_with_business_fields_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["status"] = "ambiguous"
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_not_found_output_with_business_fields_is_rejected(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = _valid_payload("page_summary")
+        payload["status"] = "not_found"
+        with self.assertRaises(RecognitionOutputContractError):
+            validator.validate(registry.get("page_summary"), request, payload)
+
+    def test_ambiguous_minimal_payload_passes(self) -> None:
+        validator, registry, request = self._page_context()
+        payload = {
+            "target_id": "target-page",
+            "target_type": "DrawingPage",
+            "status": "ambiguous",
+        }
+        result = validator.validate(registry.get("page_summary"), request, payload)
+        self.assertEqual("ambiguous", result[0].status.value)
+        self.assertEqual({}, result[0].output)
 
 
 if __name__ == "__main__":

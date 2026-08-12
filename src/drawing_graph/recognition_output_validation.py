@@ -101,17 +101,19 @@ class RecognitionOutputValidator:
                     "too_many_outputs",
                     "provider returned more outputs than the task allows",
                 )
-            return tuple(self._validate_item(item, task_spec) for item in items)
+            return tuple(self._validate_item(item, task_spec, validated_request) for item in items)
 
-        return (self._validate_item(payload, task_spec),)
+        return (self._validate_item(payload, task_spec, validated_request),)
 
     def _validate_item(
         self,
         item: Any,
         task_spec: RecognitionTaskSpec,
+        validated_request: ValidatedRecognitionRequest,
     ) -> ValidatedRecognitionOutput:
         if not isinstance(item, Mapping):
             raise RecognitionOutputContractError("not_json_object", "each output must be a JSON object")
+        _reject_forbidden_fact_keys(item, ())
         schema = _SCHEMA_FIELDS[task_spec.task_type]
         allowed = _COMMON_FIELDS | frozenset(schema)
         unknown = set(item) - allowed
@@ -126,6 +128,7 @@ class RecognitionOutputValidator:
         status = item.get("status")
         _require_text(target_id, "target_id")
         _require_text(target_type, "target_type")
+        _validate_target_ownership(target_id, target_type, validated_request)
         if not isinstance(status, str) or status not in _ALLOWED_OUTPUT_STATUSES:
             raise RecognitionOutputContractError("invalid_status", "output status is not allowed")
         confidence = item.get("confidence")
@@ -136,15 +139,25 @@ class RecognitionOutputValidator:
         ):
             raise RecognitionOutputContractError("invalid_confidence", "confidence must be between 0 and 1")
 
-        for required in task_spec.required_outputs:
-            if required not in item:
+        if status in {"succeeded", "partial"}:
+            for required in task_spec.required_outputs:
+                if required not in item:
+                    raise RecognitionOutputContractError(
+                        "missing_required_output",
+                        f"required output field {required!r} is missing",
+                    )
+            for field_name, tag in schema.items():
+                if field_name in item:
+                    _check_field_type(field_name, item[field_name], tag)
+        else:
+            business_fields = [key for key in item if key not in _COMMON_FIELDS]
+            if business_fields:
                 raise RecognitionOutputContractError(
-                    "missing_required_output",
-                    f"required output field {required!r} is missing",
+                    "no_writable_evidence_for_status",
+                    "ambiguous/not_found outputs must not carry business evidence",
                 )
-        for field_name, tag in schema.items():
-            if field_name in item:
-                _check_field_type(field_name, item[field_name], tag)
+        if task_spec.task_type is RecognitionTaskType.RELATION_EVIDENCE_EXTRACTION:
+            _validate_relation_evidence(item, validated_request)
 
         business_output = {key: value for key, value in item.items() if key not in _COMMON_FIELDS}
         uncertainties = item.get("uncertainties")
@@ -158,6 +171,78 @@ class RecognitionOutputValidator:
             confidence=confidence,
             uncertainties=uncertainties_tuple,
         )
+
+
+def _validate_target_ownership(
+    target_id: str,
+    target_type: str,
+    validated_request: ValidatedRecognitionRequest,
+) -> None:
+    expected_type = None
+    for target in validated_request.targets:
+        if target.target_id == target_id:
+            expected_type = target.target_type
+            break
+    if expected_type is None:
+        raise RecognitionOutputContractError("target_not_in_request", "output target_id is not part of the request")
+    if expected_type != target_type:
+        raise RecognitionOutputContractError(
+            "target_type_mismatch",
+            "output target_type must match the request target",
+        )
+
+
+def _reject_forbidden_fact_keys(value: Any, path: tuple[str, ...]) -> None:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            lowered = str(key).lower()
+            if (
+                "source_fact" in lowered
+                or "derived_relation" in lowered
+                or "formal_relation" in lowered
+                or lowered in {"source", "derived", "formal"}
+            ):
+                raise RecognitionOutputContractError(
+                    "fact_level_escalation",
+                    f"output field {key!r} escalates fact level",
+                )
+            _reject_forbidden_fact_keys(child, path + (str(key),))
+    elif isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _reject_forbidden_fact_keys(child, path + (str(index),))
+
+
+def _validate_relation_evidence(
+    item: Mapping[str, Any],
+    validated_request: ValidatedRecognitionRequest,
+) -> None:
+    allowed_context: set[str] = set()
+    for target in validated_request.targets:
+        allowed_context.update(target.context_element_ids)
+    evidence = item.get("candidate_evidence")
+    if not isinstance(evidence, (list, tuple)):
+        raise RecognitionOutputContractError(
+            "invalid_relation_evidence",
+            "candidate_evidence must be a list",
+        )
+    for entry in evidence:
+        if not isinstance(entry, Mapping):
+            raise RecognitionOutputContractError(
+                "invalid_relation_evidence",
+                "candidate evidence entries must be objects",
+            )
+        supporting_ids = entry.get("supporting_ids")
+        if not isinstance(supporting_ids, (list, tuple)) or not supporting_ids:
+            raise RecognitionOutputContractError(
+                "invalid_relation_evidence",
+                "candidate evidence entries require supporting_ids",
+            )
+        for supporting_id in supporting_ids:
+            if supporting_id not in allowed_context:
+                raise RecognitionOutputContractError(
+                    "supporting_id_outside_context",
+                    "supporting_ids must come from the request context whitelist",
+                )
 
 
 def _parse_payload(provider_result: str | Mapping[str, Any]) -> Any:
