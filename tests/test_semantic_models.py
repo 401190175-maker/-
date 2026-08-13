@@ -203,5 +203,95 @@ class SemanticModelsTest(unittest.TestCase):
             )
 
 
+class SemanticProjectionProvenanceTests(unittest.TestCase):
+    """Semantic DTOs carry execution provenance with backward-compatible defaults."""
+
+    def test_text_observation_provenance_defaults(self):
+        observation = TextObservation(
+            observation_id="obs:1",
+            recognition_run_id="run:1",
+            target_element_id="block:1",
+            target_element_type="DrawingBlock",
+            page_id="page:1",
+            raw_text="A1",
+            normalized_text="A1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            confidence=0.9,
+            status="confirmed",
+        )
+
+        self.assertEqual("1", observation.input_contract_version)
+        self.assertEqual("1", observation.output_contract_version)
+        self.assertEqual("preprocess-v1", observation.preprocessing_version)
+
+    def test_text_observation_accepts_custom_provenance(self):
+        observation = TextObservation(
+            observation_id="obs:1",
+            recognition_run_id="run:1",
+            target_element_id="block:1",
+            target_element_type="DrawingBlock",
+            page_id="page:1",
+            raw_text="A1",
+            normalized_text="A1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            confidence=0.9,
+            status="confirmed",
+            input_contract_version="2",
+            output_contract_version="3",
+            preprocessing_version="preprocess-v2",
+        )
+
+        self.assertEqual("2", observation.input_contract_version)
+        self.assertEqual("3", observation.output_contract_version)
+        self.assertEqual("preprocess-v2", observation.preprocessing_version)
+
+    def test_text_observation_rejects_empty_provenance_versions(self):
+        with self.assertRaises(ToolModelError):
+            TextObservation(
+                observation_id="obs:1",
+                recognition_run_id="run:1",
+                target_element_id="block:1",
+                target_element_type="DrawingBlock",
+                page_id="page:1",
+                raw_text="A1",
+                normalized_text="A1",
+                bbox=BBox(1, 2, 3, 4),
+                normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+                confidence=0.9,
+                status="confirmed",
+                preprocessing_version="",
+            )
+
+    def test_interpretation_dtos_carry_execution_provenance_defaults(self):
+        block = BlockInterpretation(
+            interpretation_id="interpretation:1",
+            recognition_run_id="run:1",
+            block_id="block:1",
+            summary="beam",
+        )
+        basic = BasicInfoInterpretation(
+            interpretation_id="interpretation:2",
+            recognition_run_id="run:1",
+            basic_info_id="basic:1",
+            raw_text="DWG-1",
+            summary="info",
+        )
+        table = TableInterpretation(
+            interpretation_id="interpretation:3",
+            recognition_run_id="run:1",
+            table_id="table:1",
+            summary="table",
+        )
+
+        for interpretation in (block, basic, table):
+            with self.subTest(kind=type(interpretation).__name__):
+                self.assertEqual("default", interpretation.model_profile)
+                self.assertEqual("default", interpretation.prompt_version)
+                self.assertEqual("1", interpretation.input_contract_version)
+                self.assertEqual("preprocess-v1", interpretation.preprocessing_version)
+
+
 if __name__ == "__main__":
     unittest.main()

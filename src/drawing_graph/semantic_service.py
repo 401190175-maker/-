@@ -170,6 +170,7 @@ class SemanticRecognitionService:
             )
             run_id = run_summary.recognition_run_id
         execution_results: list[RecognitionExecutionResult] = []
+        targets_by_id = {target.target_id: target for target in targets}
         try:
             groups = self._group_pending(
                 pending_targets,
@@ -208,12 +209,17 @@ class SemanticRecognitionService:
                 observations,
                 interpretations,
                 error_message,
-            ) = _collect_transient_outputs(
+            ) = _project_execution_results(
                 page_facts=page_facts,
                 execution_results=execution_results,
-                cached_observations=cached_observations,
-                cached_interpretations=cached_interpretations,
+                targets_by_id=targets_by_id,
+                model_profile=model_profile,
+                prompt_version=prompt_version,
+                contract_version=contract_version,
+                cache_keys=cache_keys,
             )
+            observations = (*observations, *cached_observations)
+            interpretations = (*interpretations, *cached_interpretations)
         except Exception as exc:
             if write_back and run_summary is not None:
                 self.run_log.fail_run(run_id, _error_summary(exc))
@@ -377,13 +383,6 @@ class SemanticRecognitionService:
         )
 
 
-def _target_bbox(target_element_id: str, page_facts: PageSourceFacts, normalized: bool):
-    for element in page_facts.elements:
-        if element.element_id == target_element_id:
-            return element.normalized_bbox if normalized else element.bbox
-    raise ToolModelError("NOT_FOUND", "recognition output referenced an unknown target element")
-
-
 def _merge_execution_status(execution_results: list[RecognitionExecutionResult]) -> str:
     """Merge per-group execution statuses into one run-level status."""
 
@@ -402,124 +401,275 @@ def _merge_execution_status(execution_results: list[RecognitionExecutionResult])
     return "succeeded"
 
 
-def _collect_transient_outputs(
+def _project_execution_results(
     *,
     page_facts: PageSourceFacts,
     execution_results: list[RecognitionExecutionResult],
-    cached_observations: tuple[TextObservation, ...],
-    cached_interpretations: tuple[
-        BlockInterpretation | BasicInfoInterpretation | TableInterpretation, ...
-    ],
-):
-    """Collect contract-valid outputs from execution results.
-
-    Task 31 keeps cached evidence and defers pending-output projection to the
-    semantic DTO projection task; execution results are still validated by the
-    execution service before they can appear here.
-    """
-
-    return (
-        tuple(cached_observations),
-        tuple(cached_interpretations),
-        None,
-    )
-
-
-def _observation(
-    item,
-    page_facts: PageSourceFacts,
-    run_id: str,
+    targets_by_id: dict[str, SemanticTargetInput],
     model_profile: str,
     prompt_version: str,
-    image_inputs,
-    cache_keys,
+    contract_version: str,
+    cache_keys: dict,
+):
+    """Project contract-valid execution outputs into existing semantic DTOs."""
+
+    observations: list[TextObservation] = []
+    interpretations: list[
+        BlockInterpretation | BasicInfoInterpretation | TableInterpretation
+    ] = []
+    failed_statuses = {"contract_failed", "provider_failed", "deadline_exceeded", "recognition_failed"}
+    for result in execution_results:
+        if str(result.status.value) in failed_statuses:
+            continue
+        for output in result.validated_outputs:
+            if str(output.status.value) in {"ambiguous", "not_found"}:
+                continue
+            target = targets_by_id.get(output.target_id)
+            if target is None or target.target_element_id is None:
+                continue
+            element = _find_element(page_facts, target.target_element_id)
+            if element is None:
+                continue
+            output_contract_version = target.output_contract_version or contract_version
+            if str(output.task_type.value) == "element_text_observation":
+                for item in output.output.get("observations") or ():
+                    observations.append(
+                        _project_text_observation(
+                            item=item,
+                            output=output,
+                            target=target,
+                            element=element,
+                            result=result,
+                            page_facts=page_facts,
+                            model_profile=model_profile,
+                            prompt_version=prompt_version,
+                            output_contract_version=output_contract_version,
+                            cache_keys=cache_keys,
+                        )
+                    )
+            elif str(output.task_type.value) == "section_label_observation":
+                observations.append(
+                    _project_text_observation(
+                        item={
+                            "raw_text": output.output.get("raw_label", ""),
+                            "normalized_text": output.output.get("normalized_label", ""),
+                            "confidence": output.confidence,
+                            "status": "confirmed",
+                        },
+                        output=output,
+                        target=target,
+                        element=element,
+                        result=result,
+                        page_facts=page_facts,
+                        model_profile=model_profile,
+                        prompt_version=prompt_version,
+                        output_contract_version=output_contract_version,
+                        cache_keys=cache_keys,
+                    )
+                )
+            elif str(output.task_type.value) == "block_semantic_identification":
+                interpretations.append(
+                    _project_block_interpretation(
+                        output=output,
+                        target=target,
+                        element=element,
+                        result=result,
+                        page_facts=page_facts,
+                        model_profile=model_profile,
+                        prompt_version=prompt_version,
+                        output_contract_version=output_contract_version,
+                        cache_keys=cache_keys,
+                    )
+                )
+            elif str(output.task_type.value) == "basic_info_interpretation":
+                interpretations.append(
+                    _project_basic_info_interpretation(
+                        output=output,
+                        target=target,
+                        element=element,
+                        result=result,
+                        page_facts=page_facts,
+                        model_profile=model_profile,
+                        prompt_version=prompt_version,
+                        output_contract_version=output_contract_version,
+                        cache_keys=cache_keys,
+                    )
+                )
+            elif str(output.task_type.value) == "table_interpretation":
+                interpretations.append(
+                    _project_table_interpretation(
+                        output=output,
+                        target=target,
+                        element=element,
+                        result=result,
+                        page_facts=page_facts,
+                        model_profile=model_profile,
+                        prompt_version=prompt_version,
+                        output_contract_version=output_contract_version,
+                        cache_keys=cache_keys,
+                    )
+                )
+    return tuple(observations), tuple(interpretations), None
+
+
+def _project_text_observation(
+    *,
+    item,
+    output,
+    target: SemanticTargetInput,
+    element,
+    result: RecognitionExecutionResult,
+    page_facts: PageSourceFacts,
+    model_profile: str,
+    prompt_version: str,
+    output_contract_version: str,
+    cache_keys: dict,
 ) -> TextObservation:
-    target_element_id = item["target_element_id"]
-    image_input = image_inputs.get(target_element_id)
     return TextObservation(
-        observation_id=f"obs:{run_id}:{target_element_id}",
-        recognition_run_id=run_id,
-        target_element_id=target_element_id,
-        target_element_type=item["target_element_type"],
+        observation_id=f"obs:{result.recognition_run_id}:{target.target_element_id}",
+        recognition_run_id=result.recognition_run_id,
+        target_element_id=target.target_element_id,
+        target_element_type=target.target_type,
         page_id=page_facts.page_id,
-        raw_text=item["raw_text"],
-        normalized_text=item["normalized_text"],
-        bbox=_target_bbox(target_element_id, page_facts, normalized=False),
-        normalized_bbox=_target_bbox(target_element_id, page_facts, normalized=True),
-        confidence=item["confidence"],
-        status=item["status"],
-        image_hash=item.get("image_hash") or (image_input.image_hash if image_input is not None else None),
-        cache_key=item.get("cache_key") or cache_keys.get(target_element_id),
+        raw_text=str(item.get("raw_text") or ""),
+        normalized_text=str(item.get("normalized_text") or ""),
+        bbox=element.bbox,
+        normalized_bbox=element.normalized_bbox,
+        confidence=float(item.get("confidence") if item.get("confidence") is not None else (output.confidence or 0.0)),
+        status=_observation_status(item.get("status") or output.status.value),
+        image_hash=page_facts.image_hash,
+        cache_key=cache_keys.get(target.target_element_id),
         model_profile=model_profile,
         prompt_version=prompt_version,
+        input_contract_version="1",
+        output_contract_version=output_contract_version,
+        preprocessing_version="preprocess-v1",
         created_at=_now(),
     )
 
 
-def _interpretation(
-    item,
+def _project_block_interpretation(
+    *,
+    output,
+    target: SemanticTargetInput,
+    element,
+    result: RecognitionExecutionResult,
     page_facts: PageSourceFacts,
-    run_id: str,
-) -> BlockInterpretation | BasicInfoInterpretation | TableInterpretation | None:
-    target_element_id = item["target_element_id"]
-    target_element_type = item.get("target_element_type")
-    interpretation_id = f"interpretation:{run_id}:{target_element_id}"
-    if target_element_type == "DrawingBlock":
-        return BlockInterpretation(
-            interpretation_id=interpretation_id,
-            recognition_run_id=run_id,
-            block_id=target_element_id,
-            page_id=page_facts.page_id,
-            summary=item.get("summary") or "",
-            interpreted_type=item.get("interpreted_type"),
-            components=item.get("components") or (),
-            materials=item.get("materials") or (),
-            dimensions=item.get("dimensions") or (),
-            construction_features=item.get("construction_features") or (),
-            spatial_relations=item.get("spatial_relations") or (),
-            analysis_status=item.get("analysis_status") or "interpreted",
-            uncertainties=item.get("uncertainties") or (),
-            supported_by_observation_ids=item.get("supported_by_observation_ids") or (),
-            payload_ref=item.get("payload_ref"),
-            cache_key=item.get("cache_key"),
-            contract_version=item.get("contract_version") or "1",
-        )
-    if target_element_type == "DrawingBasicInfo":
-        return BasicInfoInterpretation(
-            interpretation_id=interpretation_id,
-            recognition_run_id=run_id,
-            basic_info_id=target_element_id,
-            page_id=page_facts.page_id,
-            raw_text=item.get("raw_text") or "",
-            summary=item.get("summary") or "",
-            project_name=item.get("project_name"),
-            drawing_name=item.get("drawing_name"),
-            discipline=item.get("discipline"),
-            drawing_number=item.get("drawing_number"),
-            scale=item.get("scale"),
-            date=item.get("date"),
-            analysis_status=item.get("analysis_status") or "interpreted",
-            uncertainties=item.get("uncertainties") or (),
-            supported_by_observation_ids=item.get("supported_by_observation_ids") or (),
-            payload_ref=item.get("payload_ref"),
-            cache_key=item.get("cache_key"),
-            contract_version=item.get("contract_version") or "1",
-        )
-    if target_element_type == "Table":
-        return TableInterpretation(
-            interpretation_id=interpretation_id,
-            recognition_run_id=run_id,
-            table_id=target_element_id,
-            page_id=page_facts.page_id,
-            summary=item.get("summary") or "",
-            caption_ref=item.get("caption_ref"),
-            analysis_status=item.get("analysis_status") or "interpreted",
-            uncertainties=item.get("uncertainties") or (),
-            supported_by_observation_ids=item.get("supported_by_observation_ids") or (),
-            payload_ref=item.get("payload_ref"),
-            cache_key=item.get("cache_key"),
-            contract_version=item.get("contract_version") or "1",
-        )
+    model_profile: str,
+    prompt_version: str,
+    output_contract_version: str,
+    cache_keys: dict,
+) -> BlockInterpretation:
+    data = output.output.get("interpretation") or {}
+    return BlockInterpretation(
+        interpretation_id=f"interpretation:{result.recognition_run_id}:{target.target_element_id}",
+        recognition_run_id=result.recognition_run_id,
+        block_id=target.target_element_id,
+        page_id=page_facts.page_id,
+        summary=str(data.get("summary") or ""),
+        interpreted_type=data.get("interpreted_type"),
+        components=tuple(data.get("components") or ()),
+        materials=tuple(data.get("materials") or ()),
+        dimensions=tuple(data.get("dimensions") or ()),
+        construction_features=tuple(data.get("construction_features") or ()),
+        spatial_relations=tuple(data.get("spatial_relations") or ()),
+        analysis_status=data.get("analysis_status") or "interpreted",
+        uncertainties=tuple(data.get("uncertainties") or ()),
+        supported_by_observation_ids=tuple(data.get("supported_by_observation_ids") or ()),
+        payload_ref=None,
+        cache_key=cache_keys.get(target.target_element_id),
+        contract_version=output_contract_version,
+        model_profile=model_profile,
+        prompt_version=prompt_version,
+        input_contract_version="1",
+        preprocessing_version="preprocess-v1",
+    )
+
+
+def _project_basic_info_interpretation(
+    *,
+    output,
+    target: SemanticTargetInput,
+    element,
+    result: RecognitionExecutionResult,
+    page_facts: PageSourceFacts,
+    model_profile: str,
+    prompt_version: str,
+    output_contract_version: str,
+    cache_keys: dict,
+) -> BasicInfoInterpretation:
+    return BasicInfoInterpretation(
+        interpretation_id=f"interpretation:{result.recognition_run_id}:{target.target_element_id}",
+        recognition_run_id=result.recognition_run_id,
+        basic_info_id=target.target_element_id,
+        page_id=page_facts.page_id,
+        raw_text=str(output.output.get("raw_text") or ""),
+        summary=str(output.output.get("summary") or ""),
+        project_name=output.output.get("project_name"),
+        drawing_name=output.output.get("drawing_name"),
+        discipline=output.output.get("discipline"),
+        drawing_number=output.output.get("drawing_number"),
+        scale=output.output.get("scale"),
+        date=output.output.get("date"),
+        analysis_status=output.output.get("analysis_status") or "interpreted",
+        uncertainties=tuple(output.output.get("uncertainties") or ()),
+        supported_by_observation_ids=(),
+        payload_ref=None,
+        cache_key=cache_keys.get(target.target_element_id),
+        contract_version=output_contract_version,
+        model_profile=model_profile,
+        prompt_version=prompt_version,
+        input_contract_version="1",
+        preprocessing_version="preprocess-v1",
+    )
+
+
+def _project_table_interpretation(
+    *,
+    output,
+    target: SemanticTargetInput,
+    element,
+    result: RecognitionExecutionResult,
+    page_facts: PageSourceFacts,
+    model_profile: str,
+    prompt_version: str,
+    output_contract_version: str,
+    cache_keys: dict,
+) -> TableInterpretation:
+    return TableInterpretation(
+        interpretation_id=f"interpretation:{result.recognition_run_id}:{target.target_element_id}",
+        recognition_run_id=result.recognition_run_id,
+        table_id=target.target_element_id,
+        page_id=page_facts.page_id,
+        summary=str(output.output.get("summary") or ""),
+        caption_ref=output.output.get("caption_ref"),
+        analysis_status=output.output.get("analysis_status") or "interpreted",
+        uncertainties=tuple(output.output.get("uncertainties") or ()),
+        supported_by_observation_ids=(),
+        payload_ref=None,
+        cache_key=cache_keys.get(target.target_element_id),
+        contract_version=output_contract_version,
+        model_profile=model_profile,
+        prompt_version=prompt_version,
+        input_contract_version="1",
+        preprocessing_version="preprocess-v1",
+    )
+
+
+def _observation_status(status) -> str:
+    mapping = {
+        "succeeded": "confirmed",
+        "partial": "partial",
+        "ambiguous": "ambiguous",
+        "not_found": "not_found",
+    }
+    return mapping.get(str(status), str(status))
+
+
+def _find_element(page_facts: PageSourceFacts, element_id: str):
+    for element in page_facts.elements:
+        if element.element_id == element_id:
+            return element
     return None
 
 

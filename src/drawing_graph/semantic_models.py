@@ -67,6 +67,9 @@ class TextObservation:
     cache_key: str | None = None
     model_profile: str = "default"
     prompt_version: str = "default"
+    input_contract_version: str = "1"
+    output_contract_version: str = "1"
+    preprocessing_version: str = "preprocess-v1"
     created_at: str | None = None
 
     def __post_init__(self) -> None:
@@ -80,6 +83,9 @@ class TextObservation:
             "normalized_text",
             "model_profile",
             "prompt_version",
+            "input_contract_version",
+            "output_contract_version",
+            "preprocessing_version",
         ):
             _require_text(getattr(self, field_name), field_name)
         status = _coerce_observation_status(self.status)
@@ -121,9 +127,23 @@ class BlockInterpretation:
     payload_ref: str | None = None
     cache_key: str | None = None
     contract_version: str = "1"
+    model_profile: str = "default"
+    prompt_version: str = "default"
+    input_contract_version: str = "1"
+    preprocessing_version: str = "preprocess-v1"
 
     def __post_init__(self) -> None:
-        for field_name in ("interpretation_id", "recognition_run_id", "block_id", "summary", "contract_version"):
+        for field_name in (
+            "interpretation_id",
+            "recognition_run_id",
+            "block_id",
+            "summary",
+            "contract_version",
+            "model_profile",
+            "prompt_version",
+            "input_contract_version",
+            "preprocessing_version",
+        ):
             _require_text(getattr(self, field_name), field_name)
         _require_optional_text(self.page_id, "page_id")
         _require_optional_text(self.interpreted_type, "interpreted_type")
@@ -162,6 +182,10 @@ class BasicInfoInterpretation:
     payload_ref: str | None = None
     cache_key: str | None = None
     contract_version: str = "1"
+    model_profile: str = "default"
+    prompt_version: str = "default"
+    input_contract_version: str = "1"
+    preprocessing_version: str = "preprocess-v1"
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -171,6 +195,10 @@ class BasicInfoInterpretation:
             "raw_text",
             "summary",
             "contract_version",
+            "model_profile",
+            "prompt_version",
+            "input_contract_version",
+            "preprocessing_version",
         ):
             _require_text(getattr(self, field_name), field_name)
         _require_optional_text(self.page_id, "page_id")
@@ -210,9 +238,23 @@ class TableInterpretation:
     payload_ref: str | None = None
     cache_key: str | None = None
     contract_version: str = "1"
+    model_profile: str = "default"
+    prompt_version: str = "default"
+    input_contract_version: str = "1"
+    preprocessing_version: str = "preprocess-v1"
 
     def __post_init__(self) -> None:
-        for field_name in ("interpretation_id", "recognition_run_id", "table_id", "summary", "contract_version"):
+        for field_name in (
+            "interpretation_id",
+            "recognition_run_id",
+            "table_id",
+            "summary",
+            "contract_version",
+            "model_profile",
+            "prompt_version",
+            "input_contract_version",
+            "preprocessing_version",
+        ):
             _require_text(getattr(self, field_name), field_name)
         _require_optional_text(self.page_id, "page_id")
         _require_optional_text(self.caption_ref, "caption_ref")
