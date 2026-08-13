@@ -345,5 +345,93 @@ class QAMcpConfigTests(unittest.TestCase):
             self.assertNotIn(forbidden, field_names)
 
 
+class RecognitionProductConfigTest(unittest.TestCase):
+    """ToolFacadeConfig carries non-secret recognition product settings."""
+
+    def _config(self, **overrides):
+        from drawing_graph.config import ToolFacadeConfig
+
+        values = {"recognition_provider": "fake"}
+        values.update(overrides)
+        return ToolFacadeConfig.from_mapping(values)
+
+    def test_defaults_match_design(self):
+        config = self._config()
+        self.assertEqual(3, config.recognition_max_attempts)
+        self.assertEqual(1, config.recognition_structure_repair_attempts)
+        self.assertEqual(60.0, config.recognition_deadline_seconds)
+        self.assertEqual(250, config.recognition_base_backoff_ms)
+        self.assertEqual(2000, config.recognition_max_backoff_ms)
+        self.assertEqual(0.1, config.recognition_jitter_ratio)
+        self.assertEqual("preprocess-v1", config.recognition_preprocessing_version)
+        self.assertIsNone(config.recognition_rate_card_profile)
+        self.assertGreater(config.recognition_max_image_bytes, 0)
+        self.assertGreater(config.recognition_max_image_pixels, 0)
+        self.assertGreater(config.recognition_max_prepared_side, 0)
+
+    def test_custom_values_are_accepted(self):
+        config = self._config(
+            recognition_max_attempts=2,
+            recognition_structure_repair_attempts=1,
+            recognition_deadline_seconds=30.0,
+            recognition_base_backoff_ms=100,
+            recognition_max_backoff_ms=500,
+            recognition_jitter_ratio=0.2,
+            recognition_preprocessing_version="preprocess-v2",
+            recognition_rate_card_profile="qwen-v1",
+        )
+        self.assertEqual(2, config.recognition_max_attempts)
+        self.assertEqual(30.0, config.recognition_deadline_seconds)
+        self.assertEqual("preprocess-v2", config.recognition_preprocessing_version)
+        self.assertEqual("qwen-v1", config.recognition_rate_card_profile)
+
+    def test_invalid_attempts_and_repair_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self._config(recognition_max_attempts=0)
+        with self.assertRaises(ValueError):
+            self._config(recognition_max_attempts=-1)
+        with self.assertRaises(ValueError):
+            self._config(recognition_max_attempts=2, recognition_structure_repair_attempts=2)
+
+    def test_invalid_timing_and_jitter_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self._config(recognition_deadline_seconds=-1)
+        with self.assertRaises(ValueError):
+            self._config(recognition_base_backoff_ms=2000, recognition_max_backoff_ms=250)
+        for jitter in (-0.1, 1.5):
+            with self.subTest(jitter=jitter):
+                with self.assertRaises(ValueError):
+                    self._config(recognition_jitter_ratio=jitter)
+
+    def test_invalid_image_limits_are_rejected(self):
+        for field_name in (
+            "recognition_max_image_bytes",
+            "recognition_max_image_pixels",
+            "recognition_max_prepared_side",
+        ):
+            with self.subTest(field_name=field_name):
+                with self.assertRaises(ValueError):
+                    self._config(**{field_name: 0})
+                with self.assertRaises(ValueError):
+                    self._config(**{field_name: -1})
+
+    def test_invalid_preprocessing_version_and_rate_card_are_rejected(self):
+        with self.assertRaises(ValueError):
+            self._config(recognition_preprocessing_version="")
+        with self.assertRaises(ValueError):
+            self._config(recognition_rate_card_profile="")
+
+    def test_config_rejects_secret_fields(self):
+        with self.assertRaises(ValueError):
+            self._config(DASHSCOPE_API_KEY="secret")
+        with self.assertRaises(ValueError):
+            self._config(api_key="secret")
+
+    def test_config_never_holds_api_key(self):
+        config = self._config()
+        self.assertFalse(hasattr(config, "api_key"))
+        self.assertFalse(hasattr(config, "DASHSCOPE_API_KEY"))
+
+
 if __name__ == "__main__":
     unittest.main()

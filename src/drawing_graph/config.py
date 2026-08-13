@@ -81,6 +81,17 @@ class ToolFacadeConfig:
     qwen_model: str = "qwen3-vl-plus"
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_timeout_seconds: float = 60.0
+    recognition_max_attempts: int = 3
+    recognition_structure_repair_attempts: int = 1
+    recognition_deadline_seconds: float = 60.0
+    recognition_base_backoff_ms: int = 250
+    recognition_max_backoff_ms: int = 2000
+    recognition_jitter_ratio: float = 0.1
+    recognition_max_image_bytes: int = 20 * 1024 * 1024
+    recognition_max_image_pixels: int = 50_000_000
+    recognition_max_prepared_side: int = 2048
+    recognition_preprocessing_version: str = "preprocess-v1"
+    recognition_rate_card_profile: str | None = None
 
     @classmethod
     def from_env(cls) -> "ToolFacadeConfig":
@@ -96,6 +107,35 @@ class ToolFacadeConfig:
                     "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 ),
                 "qwen_timeout_seconds": env.get("DRAWING_GRAPH_QWEN_TIMEOUT_SECONDS", 60.0),
+                "recognition_max_attempts": env.get("DRAWING_GRAPH_RECOGNITION_MAX_ATTEMPTS", 3),
+                "recognition_structure_repair_attempts": env.get(
+                    "DRAWING_GRAPH_RECOGNITION_STRUCTURE_REPAIR_ATTEMPTS",
+                    1,
+                ),
+                "recognition_deadline_seconds": env.get(
+                    "DRAWING_GRAPH_RECOGNITION_DEADLINE_SECONDS",
+                    60.0,
+                ),
+                "recognition_base_backoff_ms": env.get("DRAWING_GRAPH_RECOGNITION_BASE_BACKOFF_MS", 250),
+                "recognition_max_backoff_ms": env.get("DRAWING_GRAPH_RECOGNITION_MAX_BACKOFF_MS", 2000),
+                "recognition_jitter_ratio": env.get("DRAWING_GRAPH_RECOGNITION_JITTER_RATIO", 0.1),
+                "recognition_max_image_bytes": env.get(
+                    "DRAWING_GRAPH_RECOGNITION_MAX_IMAGE_BYTES",
+                    20 * 1024 * 1024,
+                ),
+                "recognition_max_image_pixels": env.get(
+                    "DRAWING_GRAPH_RECOGNITION_MAX_IMAGE_PIXELS",
+                    50_000_000,
+                ),
+                "recognition_max_prepared_side": env.get(
+                    "DRAWING_GRAPH_RECOGNITION_MAX_PREPARED_SIDE",
+                    2048,
+                ),
+                "recognition_preprocessing_version": env.get(
+                    "DRAWING_GRAPH_RECOGNITION_PREPROCESSING_VERSION",
+                    "preprocess-v1",
+                ),
+                "recognition_rate_card_profile": env.get("DRAWING_GRAPH_RECOGNITION_RATE_CARD_PROFILE"),
             }
         )
 
@@ -112,7 +152,8 @@ class ToolFacadeConfig:
             "token",
             "secret",
         }
-        if forbidden.intersection(key.lower() for key in values):
+        lowered_keys = {str(key).lower() for key in values}
+        if any(token in lowered for lowered in lowered_keys for token in forbidden):
             raise ValueError("Tool facade config must not accept database or provider secrets")
         default_write_back = values.get("default_write_back", False)
         if not isinstance(default_write_back, bool):
@@ -143,6 +184,66 @@ class ToolFacadeConfig:
             values.get("qwen_timeout_seconds", 60.0),
             "qwen_timeout_seconds",
         )
+        recognition_max_attempts = _mapping_int(
+            values.get("recognition_max_attempts", 3),
+            "recognition_max_attempts",
+            minimum=1,
+        )
+        recognition_structure_repair_attempts = _mapping_int(
+            values.get("recognition_structure_repair_attempts", 1),
+            "recognition_structure_repair_attempts",
+            minimum=0,
+        )
+        if recognition_structure_repair_attempts >= recognition_max_attempts:
+            raise ValueError("recognition_structure_repair_attempts must be below recognition_max_attempts")
+        recognition_deadline_seconds = _mapping_number(
+            values.get("recognition_deadline_seconds", 60.0),
+            "recognition_deadline_seconds",
+            minimum=0,
+            exclusive_minimum=True,
+        )
+        recognition_base_backoff_ms = _mapping_int(
+            values.get("recognition_base_backoff_ms", 250),
+            "recognition_base_backoff_ms",
+            minimum=1,
+        )
+        recognition_max_backoff_ms = _mapping_int(
+            values.get("recognition_max_backoff_ms", 2000),
+            "recognition_max_backoff_ms",
+            minimum=1,
+        )
+        if recognition_max_backoff_ms < recognition_base_backoff_ms:
+            raise ValueError("recognition_max_backoff_ms must not be below recognition_base_backoff_ms")
+        recognition_jitter_ratio = _mapping_number(
+            values.get("recognition_jitter_ratio", 0.1),
+            "recognition_jitter_ratio",
+            minimum=0,
+            maximum=1,
+        )
+        recognition_max_image_bytes = _mapping_int(
+            values.get("recognition_max_image_bytes", 20 * 1024 * 1024),
+            "recognition_max_image_bytes",
+            minimum=1,
+        )
+        recognition_max_image_pixels = _mapping_int(
+            values.get("recognition_max_image_pixels", 50_000_000),
+            "recognition_max_image_pixels",
+            minimum=1,
+        )
+        recognition_max_prepared_side = _mapping_int(
+            values.get("recognition_max_prepared_side", 2048),
+            "recognition_max_prepared_side",
+            minimum=1,
+        )
+        recognition_preprocessing_version = str(
+            values.get("recognition_preprocessing_version", "preprocess-v1")
+        ).strip()
+        if not recognition_preprocessing_version:
+            raise ValueError("recognition_preprocessing_version must not be empty")
+        rate_card_raw = values.get("recognition_rate_card_profile")
+        recognition_rate_card_profile = str(rate_card_raw).strip() if rate_card_raw is not None else None
+        if rate_card_raw is not None and not recognition_rate_card_profile:
+            raise ValueError("recognition_rate_card_profile must not be empty when provided")
         return cls(
             default_write_back=default_write_back,
             model_profile=model_profile,
@@ -157,6 +258,17 @@ class ToolFacadeConfig:
             qwen_model=qwen_model,
             qwen_base_url=qwen_base_url,
             qwen_timeout_seconds=qwen_timeout_seconds,
+            recognition_max_attempts=recognition_max_attempts,
+            recognition_structure_repair_attempts=recognition_structure_repair_attempts,
+            recognition_deadline_seconds=recognition_deadline_seconds,
+            recognition_base_backoff_ms=recognition_base_backoff_ms,
+            recognition_max_backoff_ms=recognition_max_backoff_ms,
+            recognition_jitter_ratio=recognition_jitter_ratio,
+            recognition_max_image_bytes=recognition_max_image_bytes,
+            recognition_max_image_pixels=recognition_max_image_pixels,
+            recognition_max_prepared_side=recognition_max_prepared_side,
+            recognition_preprocessing_version=recognition_preprocessing_version,
+            recognition_rate_card_profile=recognition_rate_card_profile,
         )
 
 
@@ -325,6 +437,44 @@ def _positive_float(value: object, field_name: str) -> float:
         raise ValueError(f"{field_name} must be numeric") from error
     if parsed <= 0:
         raise ValueError(f"{field_name} must be positive")
+    return parsed
+
+
+def _mapping_int(value: object, field_name: str, *, minimum: int) -> int:
+    """Return an integer from a mapping value, accepting digit strings."""
+
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be an integer") from None
+    if parsed < minimum:
+        raise ValueError(f"{field_name} must be at least {minimum}")
+    return parsed
+
+
+def _mapping_number(
+    value: object,
+    field_name: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+    exclusive_minimum: bool = False,
+) -> float:
+    """Return a bounded number from a mapping value, accepting numeric strings."""
+
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a number")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field_name} must be a number") from None
+    if minimum is not None:
+        if (parsed <= minimum if exclusive_minimum else parsed < minimum):
+            raise ValueError(f"{field_name} is out of range")
+    if maximum is not None and parsed > maximum:
+        raise ValueError(f"{field_name} is out of range")
     return parsed
 
 
