@@ -8,9 +8,9 @@ from pathlib import Path
 from drawing_graph.recognition_image_preprocessing import PreparedRecognitionImage
 from drawing_graph.recognition_models import RecognitionImageRole, RecognitionProviderUsage
 from drawing_graph.recognition_prompting import RenderedRecognitionPrompt
+from drawing_graph.recognition_retry import RecognitionProviderError
 from drawing_graph.semantic_client import (
     FakeMultimodalRecognitionClient,
-    FakeProviderFailure,
     MultimodalRecognitionClient,
     RecognitionClientRequest,
     RecognitionClientResult,
@@ -133,20 +133,27 @@ class FakeProviderScriptTests(unittest.TestCase):
         self.assertEqual(1, len(client.requests))
         self.assertEqual("fp-1", client.requests[0].request_fingerprint)
 
-    def test_failure_tokens_raise_classified_fake_failures(self) -> None:
+    def test_failure_tokens_raise_classified_provider_errors(self) -> None:
         expected = {
-            "http_429": "http_429",
-            "http_5xx": "http_5xx",
-            "timeout": "timeout",
-            "invalid_json": "invalid_json",
-            "schema_failure": "schema_failure",
+            "http_429": ("rate_limited", True),
+            "http_5xx": ("temporary", True),
+            "timeout": ("timeout", True),
+            "invalid_json": ("invalid_response", False),
+            "schema_failure": ("invalid_response", False),
         }
-        for token, category in expected.items():
+        for token, (category, retryable) in expected.items():
             with self.subTest(token=token):
                 client = FakeMultimodalRecognitionClient(script=(token,))
-                with self.assertRaises(FakeProviderFailure) as caught:
+                with self.assertRaises(RecognitionProviderError) as caught:
                     client.recognize(_request())
-                self.assertEqual(category, caught.exception.category)
+                self.assertEqual(category, caught.exception.category.value)
+                self.assertEqual(retryable, caught.exception.retryable)
+
+    def test_retry_after_tuple_token_is_honored(self) -> None:
+        client = FakeMultimodalRecognitionClient(script=(("http_429", 5),))
+        with self.assertRaises(RecognitionProviderError) as caught:
+            client.recognize(_request())
+        self.assertEqual(5.0, caught.exception.retry_after_seconds)
 
     def test_script_is_consumed_in_order(self) -> None:
         client = FakeMultimodalRecognitionClient(script=({"summary": "first"}, {"summary": "second"}))

@@ -9,6 +9,7 @@ from typing import Any, Mapping, Protocol, runtime_checkable
 from .recognition_image_preprocessing import PreparedRecognitionImage
 from .recognition_models import RecognitionProviderUsage
 from .recognition_prompting import RenderedRecognitionPrompt
+from .recognition_retry import RecognitionProviderError
 from .tool_models import ToolModelError
 
 
@@ -79,14 +80,6 @@ class MultimodalRecognitionClient(Protocol):
         """Return the adapted provider payload for one call."""
 
 
-class FakeProviderFailure(Exception):
-    """Deterministic fake provider failure carrying a stable category."""
-
-    def __init__(self, category: str, message: str):
-        self.category = category
-        super().__init__(message)
-
-
 class FakeMultimodalRecognitionClient:
     """Scriptable fake that simulates success, HTTP/timeout and parse failures."""
 
@@ -109,6 +102,8 @@ class FakeMultimodalRecognitionClient:
             return _success_result(dict(outcome))
         if isinstance(outcome, str):
             return _raise_outcome(outcome)
+        if isinstance(outcome, tuple) and len(outcome) == 2 and isinstance(outcome[0], str):
+            return _raise_outcome(outcome[0], outcome[1])
         raise TypeError("fake provider script items must be mappings or outcome tokens")
 
 
@@ -120,19 +115,39 @@ def _success_result(payload: Mapping[str, Any]) -> RecognitionClientResult:
     )
 
 
-def _raise_outcome(outcome: str) -> RecognitionClientResult:
-    failures = {
-        "http_429": ("http_429", "provider is rate limited"),
-        "http_5xx": ("http_5xx", "provider returned a temporary server error"),
-        "timeout": ("timeout", "provider call timed out"),
-        "invalid_json": ("invalid_json", "provider returned malformed JSON"),
-        "schema_failure": ("schema_failure", "provider output failed schema validation"),
-    }
-    try:
-        category, message = failures[outcome]
-    except KeyError as exc:
-        raise ValueError(f"unknown fake provider outcome: {outcome}") from exc
-    raise FakeProviderFailure(category, message)
+def _raise_outcome(outcome: str, retry_after: Any = None) -> RecognitionClientResult:
+    if outcome == "http_429":
+        raise RecognitionProviderError(
+            category="rate_limited",
+            retryable=True,
+            safe_message="provider is rate limited",
+            retry_after_seconds=retry_after,
+        )
+    if outcome == "http_401":
+        raise RecognitionProviderError(
+            category="authentication",
+            retryable=False,
+            safe_message="provider authentication failed",
+        )
+    if outcome == "http_5xx":
+        raise RecognitionProviderError(
+            category="temporary",
+            retryable=True,
+            safe_message="provider returned a temporary server error",
+        )
+    if outcome == "timeout":
+        raise RecognitionProviderError(
+            category="timeout",
+            retryable=True,
+            safe_message="provider call timed out",
+        )
+    if outcome in {"invalid_json", "schema_failure"}:
+        raise RecognitionProviderError(
+            category="invalid_response",
+            retryable=False,
+            safe_message="provider returned an invalid response",
+        )
+    raise ValueError(f"unknown fake provider outcome: {outcome}")
 
 
 def _require_text(value: Any, field_name: str) -> str:
@@ -148,7 +163,6 @@ def _require_optional_text(value: Any, field_name: str) -> None:
 
 __all__ = (
     "FakeMultimodalRecognitionClient",
-    "FakeProviderFailure",
     "MultimodalRecognitionClient",
     "RecognitionClientRequest",
     "RecognitionClientResult",
