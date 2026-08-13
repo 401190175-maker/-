@@ -13,6 +13,7 @@ import httpx
 
 from .recognition_image_preprocessing import PreparedRecognitionImage
 from .recognition_models import RecognitionProviderUsage, UsageStatus
+from .recognition_retry import RecognitionProviderError, classify_exception, classify_http_status
 from .semantic_client import RecognitionClientRequest, RecognitionClientResult
 from .tool_models import ToolModelError
 
@@ -87,12 +88,15 @@ class QwenMultimodalRecognitionClient:
                 follow_redirects=True,
             )
         except httpx.TimeoutException as exc:
-            raise ToolModelError("RECOGNITION_FAILED", "recognition client timed out") from exc
+            raise classify_exception(exc) from exc
         except httpx.HTTPError as exc:
-            raise ToolModelError("RECOGNITION_FAILED", "recognition provider request failed") from exc
+            raise classify_exception(exc) from exc
         _reject_insecure_response_url(response)
         if response.status_code >= 400:
-            raise ToolModelError("RECOGNITION_FAILED", "recognition provider returned an error")
+            raise classify_http_status(
+                response.status_code,
+                retry_after_header=response.headers.get("Retry-After"),
+            )
         try:
             provider_payload = response.json()
             content = _extract_message_content(provider_payload)
@@ -101,7 +105,11 @@ class QwenMultimodalRecognitionClient:
             request_id = provider_payload.get("id")
             usage = _parse_usage(provider_payload.get("usage"))
         except (KeyError, TypeError, ValueError, ToolModelError) as exc:
-            raise ToolModelError("RECOGNITION_FAILED", "recognition client returned unparseable output") from exc
+            raise RecognitionProviderError(
+                category="invalid_response",
+                retryable=False,
+                safe_message="recognition client returned unparseable output",
+            ) from exc
         return RecognitionClientResult(
             payload=parsed,
             provider_request_id=str(request_id) if request_id is not None else None,
@@ -157,7 +165,11 @@ def _validate_base_url(base_url: str) -> None:
 def _reject_insecure_response_url(response: httpx.Response) -> None:
     host = response.url.host or ""
     if response.url.scheme != "https" and not _is_loopback(host):
-        raise ToolModelError("INSECURE_REDIRECT", "provider redirected to a non-HTTPS endpoint")
+        raise RecognitionProviderError(
+            category="permanent",
+            retryable=False,
+            safe_message="provider redirected to a non-HTTPS endpoint",
+        )
 
 
 def _is_loopback(host: str) -> bool:

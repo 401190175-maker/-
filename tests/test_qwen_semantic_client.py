@@ -14,6 +14,7 @@ from drawing_graph.qwen_semantic_client import QwenMultimodalRecognitionClient, 
 from drawing_graph.recognition_image_preprocessing import PreparedRecognitionImage
 from drawing_graph.recognition_models import RecognitionImageRole, UsageStatus
 from drawing_graph.recognition_prompting import RenderedRecognitionPrompt
+from drawing_graph.recognition_retry import RecognitionProviderError
 from drawing_graph.semantic_client import RecognitionClientRequest
 from drawing_graph.tool_models import BBox, ToolModelError
 
@@ -177,8 +178,10 @@ class QwenPreparedImageAdapterTests(unittest.TestCase):
                 follow_redirects=True,
             ),
         )
-        with self.assertRaises(ToolModelError):
+        with self.assertRaises(RecognitionProviderError) as caught:
             client.recognize(_request())
+        self.assertEqual("permanent", caught.exception.category.value)
+        self.assertFalse(caught.exception.retryable)
 
     def test_provider_error_does_not_leak_key_or_error_body(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -188,10 +191,39 @@ class QwenPreparedImageAdapterTests(unittest.TestCase):
             QwenRecognitionConfig(api_key="super-secret-key"),
             http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         )
-        with self.assertRaises(ToolModelError) as caught:
+        with self.assertRaises(RecognitionProviderError) as caught:
             client.recognize(_request())
+        self.assertEqual("temporary", caught.exception.category.value)
+        self.assertTrue(caught.exception.retryable)
         self.assertNotIn("super-secret-key", str(caught.exception))
         self.assertNotIn("boom-internal", str(caught.exception))
+
+    def test_429_is_retryable_rate_limited_with_retry_after(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, headers={"retry-after": "5"}, json={"error": {"message": "slow down"}})
+
+        client = QwenMultimodalRecognitionClient(
+            QwenRecognitionConfig(api_key="test-key"),
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+        with self.assertRaises(RecognitionProviderError) as caught:
+            client.recognize(_request())
+        self.assertEqual("rate_limited", caught.exception.category.value)
+        self.assertTrue(caught.exception.retryable)
+        self.assertEqual(5.0, caught.exception.retry_after_seconds)
+
+    def test_401_is_terminal_authentication_error(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401, json={"error": {"message": "bad key"}})
+
+        client = QwenMultimodalRecognitionClient(
+            QwenRecognitionConfig(api_key="test-key"),
+            http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        )
+        with self.assertRaises(RecognitionProviderError) as caught:
+            client.recognize(_request())
+        self.assertEqual("authentication", caught.exception.category.value)
+        self.assertFalse(caught.exception.retryable)
 
     def test_unparseable_content_raises_safe_failure(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
@@ -201,8 +233,10 @@ class QwenPreparedImageAdapterTests(unittest.TestCase):
             QwenRecognitionConfig(api_key="test-key"),
             http_client=httpx.Client(transport=httpx.MockTransport(handler)),
         )
-        with self.assertRaises(ToolModelError):
+        with self.assertRaises(RecognitionProviderError) as caught:
             client.recognize(_request())
+        self.assertEqual("invalid_response", caught.exception.category.value)
+        self.assertFalse(caught.exception.retryable)
 
     def test_adapter_imports_stay_inside_provider_boundary(self) -> None:
         import drawing_graph.qwen_semantic_client as module
