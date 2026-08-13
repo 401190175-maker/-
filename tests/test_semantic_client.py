@@ -1,148 +1,183 @@
-import sys
+"""Offline contract tests for the narrowed prepared-image provider port."""
+
+from __future__ import annotations
+
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from drawing_graph.recognition_image_preprocessing import PreparedRecognitionImage
+from drawing_graph.recognition_models import RecognitionImageRole, RecognitionProviderUsage
+from drawing_graph.recognition_prompting import RenderedRecognitionPrompt
+from drawing_graph.semantic_client import (
+    FakeMultimodalRecognitionClient,
+    FakeProviderFailure,
+    MultimodalRecognitionClient,
+    RecognitionClientRequest,
+    RecognitionClientResult,
+)
+from drawing_graph.tool_models import BBox, ToolModelError
 
-from drawing_graph.semantic_client import FakeMultimodalRecognitionClient, RecognitionClientRequest
-from drawing_graph.tool_models import BBox, SemanticTargetInput, ToolModelError
+
+def _prompt() -> RenderedRecognitionPrompt:
+    return RenderedRecognitionPrompt(
+        system_instruction="system",
+        user_instruction="user",
+        schema_id="output/page-summary",
+        schema_version="1",
+        prompt_version="prompt-v1",
+        fingerprint="f" * 64,
+        image_role_order=("page",),
+    )
 
 
-class SemanticClientTest(unittest.TestCase):
-    def test_fake_client_returns_successful_observation_payloads(self):
-        client = FakeMultimodalRecognitionClient(
-            outputs=[
-                {
-                    "target_element_id": "block:1",
-                    "target_element_type": "DrawingBlock",
-                    "raw_text": "A1",
-                    "normalized_text": "A1",
-                    "confidence": 0.9,
-                    "status": "confirmed",
-                }
-            ]
-        )
-        request = RecognitionClientRequest(
-            page_id="page:1",
-            image_path="road_24.png",
-            targets=(("block:1", "DrawingBlock", BBox(1, 2, 3, 4), BBox(0.1, 0.2, 0.3, 0.4)),),
-            model_profile="default",
-            prompt_version="p1",
-        )
+def _image() -> PreparedRecognitionImage:
+    return PreparedRecognitionImage(
+        role=RecognitionImageRole.PAGE,
+        mime="image/png",
+        content=b"\x89PNG\r\n\x1a\n",
+        source_hash="a" * 64,
+        prepared_hash="b" * 64,
+        source_size=(100, 80),
+        crop_bbox=BBox(0, 0, 100, 80),
+        padding=0,
+        output_size=(100, 80),
+        scale=1.0,
+        preprocessing_version="preprocess-v1",
+    )
 
-        result = client.recognize(request)
 
-        self.assertEqual("succeeded", result.status)
-        self.assertEqual("A1", result.observations[0]["normalized_text"])
+def _request(**overrides) -> RecognitionClientRequest:
+    values = {
+        "model_profile": "qwen3-vl-plus",
+        "rendered_prompt": _prompt(),
+        "prepared_images": (_image(),),
+        "output_contract_version": "1",
+        "timeout_seconds": 60.0,
+        "request_fingerprint": "fp-1",
+    }
+    values.update(overrides)
+    return RecognitionClientRequest(**values)
 
-    def test_fake_client_can_return_partial_failed_and_unparseable_results(self):
-        request = RecognitionClientRequest(
-            page_id="page:1",
-            image_path="road_24.png",
-            targets=(),
-            model_profile="default",
-            prompt_version="p1",
-        )
 
-        self.assertEqual("partial", FakeMultimodalRecognitionClient(status="partial").recognize(request).status)
-        self.assertEqual("failed", FakeMultimodalRecognitionClient(status="failed").recognize(request).status)
+class ProviderPortContractTests(unittest.TestCase):
+    """RecognitionClientRequest must carry only provider inputs."""
+
+    def test_request_carries_rendered_prompt_images_and_contract(self) -> None:
+        request = _request()
+        self.assertEqual("qwen3-vl-plus", request.model_profile)
+        self.assertIsInstance(request.rendered_prompt, RenderedRecognitionPrompt)
+        self.assertEqual(1, len(request.prepared_images))
+        self.assertEqual("1", request.output_contract_version)
+        self.assertEqual(60.0, request.timeout_seconds)
+        self.assertEqual("fp-1", request.request_fingerprint)
+
+    def test_request_has_no_local_image_path_or_page_id(self) -> None:
+        request = _request()
+        self.assertFalse(hasattr(request, "image_path"))
+        self.assertFalse(hasattr(request, "page_id"))
+        self.assertFalse(hasattr(request, "context"))
+
+    def test_request_rejects_credentials_and_headers(self) -> None:
+        with self.assertRaises(TypeError):
+            _request(api_key="secret")
+        with self.assertRaises(TypeError):
+            _request(authorization="Bearer secret")
+        with self.assertRaises(TypeError):
+            _request(image_path=r"C:\drawings\page-1.png")
+
+    def test_request_timeout_must_be_positive(self) -> None:
         with self.assertRaises(ToolModelError):
-            FakeMultimodalRecognitionClient(unparseable=True).recognize(request)
+            _request(timeout_seconds=0)
 
-    def test_fake_client_simulates_timeout_as_recognition_failed(self):
-        request = RecognitionClientRequest(
-            page_id="page:1",
-            image_path="road_24.png",
-            targets=(("block:1", "DrawingBlock", BBox(1, 2, 3, 4), BBox(0.1, 0.2, 0.3, 0.4)),),
-            model_profile="default",
-            prompt_version="p1",
-            context={"page_number": 24},
-        )
-
-        with self.assertRaises(ToolModelError) as error:
-            FakeMultimodalRecognitionClient(timeout=True).recognize(request)
-
-        self.assertEqual("RECOGNITION_FAILED", error.exception.category)
-
-    def test_request_carries_image_bbox_target_and_minimal_page_context(self):
-        request = RecognitionClientRequest(
-            page_id="page:1",
-            image_path="road_24.png",
-            targets=(("block:1", "DrawingBlock", BBox(1, 2, 3, 4), BBox(0.1, 0.2, 0.3, 0.4)),),
-            model_profile="vision-v1",
-            prompt_version="prompt-v1",
-            context={"page_number": 24, "context_element_ids": ("caption:1",)},
-        )
-
-        self.assertEqual("road_24.png", request.image_path)
-        self.assertEqual(("block:1", "DrawingBlock", BBox(1, 2, 3, 4), BBox(0.1, 0.2, 0.3, 0.4)), request.targets[0])
-        self.assertEqual(24, request.context["page_number"])
-
-    def test_request_rejects_api_key_free_text(self):
+    def test_request_requires_prepared_images_tuple(self) -> None:
         with self.assertRaises(ToolModelError):
-            RecognitionClientRequest(
-                page_id="page:1",
-                image_path="road_24.png",
-                targets=(),
-                model_profile="default",
-                prompt_version="p1",
-                context={"api_key": "secret"},
-            )
+            _request(prepared_images=[_image()])
+        with self.assertRaises(ToolModelError):
+            _request(prepared_images=("not-an-image",))
 
-    def test_fake_client_consumes_precise_target_inputs(self):
-        client = FakeMultimodalRecognitionClient(
-            outputs=[
-                {
-                    "target_element_id": "element:1",
-                    "target_element_type": "DrawingBlock",
-                    "raw_text": "A1",
-                    "normalized_text": "A1",
-                    "confidence": 0.9,
-                    "status": "confirmed",
-                }
-            ]
+    def test_request_requires_rendered_prompt(self) -> None:
+        with self.assertRaises(ToolModelError):
+            _request(rendered_prompt="plain text")
+
+    def test_result_contains_only_adapted_payload_and_metadata(self) -> None:
+        result = RecognitionClientResult(
+            payload={"summary": "page text"},
+            provider_request_id="req-id-1",
+            model_name="qwen3-vl-plus",
+            model_version="qwen3-vl-plus-v1",
+            usage=RecognitionProviderUsage(input_tokens=10, output_tokens=5, status="available"),
         )
-        request = RecognitionClientRequest(
-            page_id="page:1",
-            image_path="road_24.png",
-            targets=(),
-            model_profile="qwen-vl",
-            prompt_version="prompt-v1",
-            target_inputs=(
-                SemanticTargetInput(
-                    target_id="target:1",
-                    page_id="page:1",
-                    target_element_id="element:1",
-                    target_type="DrawingBlock",
-                    task_type="text_observation",
-                    required_outputs=("observation",),
-                    bbox=BBox(1, 2, 3, 4),
-                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
-                    context_element_ids=("element:2",),
-                    output_contract_version="1",
-                ),
-            ),
-        )
+        self.assertEqual({"summary": "page text"}, result.payload)
+        self.assertEqual("req-id-1", result.provider_request_id)
+        self.assertEqual(10, result.usage.input_tokens)
 
-        result = client.recognize(request)
+    def test_result_rejects_header_or_traceback_fields(self) -> None:
+        with self.assertRaises(TypeError):
+            RecognitionClientResult(payload={}, headers={"authorization": "x"})
+        with self.assertRaises(TypeError):
+            RecognitionClientResult(payload={}, traceback="tb")
 
-        self.assertEqual("succeeded", result.status)
+    def test_protocol_is_implemented_by_fake(self) -> None:
+        self.assertTrue(issubclass(FakeMultimodalRecognitionClient, MultimodalRecognitionClient))
+
+
+class FakeProviderScriptTests(unittest.TestCase):
+    """The fake must deterministically simulate every provider failure mode."""
+
+    def test_success_returns_payload_and_records_request(self) -> None:
+        client = FakeMultimodalRecognitionClient(script=({"summary": "x"},))
+        result = client.recognize(_request())
+        self.assertIsInstance(result, RecognitionClientResult)
+        self.assertEqual({"summary": "x"}, result.payload)
+        self.assertEqual("fake-multimodal", result.model_name)
         self.assertEqual(1, len(client.requests))
-        consumed = client.requests[0].target_inputs[0]
-        self.assertEqual("text_observation", consumed.task_type)
-        self.assertEqual(("observation",), consumed.required_outputs)
-        self.assertEqual("1", consumed.output_contract_version)
+        self.assertEqual("fp-1", client.requests[0].request_fingerprint)
 
-    def test_request_rejects_invalid_target_inputs(self):
-        with self.assertRaises(ToolModelError):
-            RecognitionClientRequest(
-                page_id="page:1",
-                image_path="road_24.png",
-                targets=(),
-                model_profile="default",
-                prompt_version="p1",
-                target_inputs=("not-a-target",),
-            )
+    def test_failure_tokens_raise_classified_fake_failures(self) -> None:
+        expected = {
+            "http_429": "http_429",
+            "http_5xx": "http_5xx",
+            "timeout": "timeout",
+            "invalid_json": "invalid_json",
+            "schema_failure": "schema_failure",
+        }
+        for token, category in expected.items():
+            with self.subTest(token=token):
+                client = FakeMultimodalRecognitionClient(script=(token,))
+                with self.assertRaises(FakeProviderFailure) as caught:
+                    client.recognize(_request())
+                self.assertEqual(category, caught.exception.category)
+
+    def test_script_is_consumed_in_order(self) -> None:
+        client = FakeMultimodalRecognitionClient(script=({"summary": "first"}, {"summary": "second"}))
+        self.assertEqual("first", client.recognize(_request()).payload["summary"])
+        self.assertEqual("second", client.recognize(_request()).payload["summary"])
+
+    def test_exhausted_script_repeats_last_outcome_deterministically(self) -> None:
+        client = FakeMultimodalRecognitionClient(script=({"summary": "last"},))
+        self.assertEqual("last", client.recognize(_request()).payload["summary"])
+        self.assertEqual("last", client.recognize(_request()).payload["summary"])
+
+    def test_empty_script_returns_empty_success_payload(self) -> None:
+        client = FakeMultimodalRecognitionClient()
+        self.assertEqual({}, client.recognize(_request()).payload)
+
+    def test_unknown_script_token_is_rejected(self) -> None:
+        client = FakeMultimodalRecognitionClient(script=("bogus",))
+        with self.assertRaises(ValueError):
+            client.recognize(_request())
+
+    def test_provider_port_module_is_pure(self) -> None:
+        import drawing_graph.semantic_client as module
+
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        import_lines = "\n".join(
+            line.strip().lower()
+            for line in source.splitlines()
+            if line.strip().startswith(("import ", "from "))
+        )
+        for forbidden in ("neo4j", "repository", "cypher", "httpx", "qwen", "facade", "os.environ", "pathlib"):
+            self.assertNotIn(forbidden, import_lines)
 
 
 if __name__ == "__main__":
