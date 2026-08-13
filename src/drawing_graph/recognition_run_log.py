@@ -26,6 +26,13 @@ class RecognitionRunLogPort(Protocol):
         model_name: str | None = None,
         model_version: str | None = None,
         cost_summary: Mapping[str, Any] | None = None,
+        attempt_ids: tuple[str, ...] = (),
+        usage_summary=None,
+        latency_summary=None,
+        input_contract_version: str = "1",
+        output_contract_version: str = "1",
+        preprocessing_version: str = "preprocess-v1",
+        payload_ref: str | None = None,
     ) -> RecognitionRunSummary:
         """Create a pending graph-external run log."""
 
@@ -34,6 +41,13 @@ class RecognitionRunLogPort(Protocol):
         recognition_run_id: str,
         model_name: str | None = None,
         model_version: str | None = None,
+        attempt_ids: tuple[str, ...] | None = None,
+        usage_summary=None,
+        latency_summary=None,
+        payload_ref: str | None = None,
+        input_contract_version: str | None = None,
+        output_contract_version: str | None = None,
+        preprocessing_version: str | None = None,
     ) -> RecognitionRunSummary:
         """Mark a run as succeeded."""
 
@@ -63,6 +77,13 @@ class InMemoryRecognitionRunLog:
         model_name: str | None = None,
         model_version: str | None = None,
         cost_summary: Mapping[str, Any] | None = None,
+        attempt_ids: tuple[str, ...] = (),
+        usage_summary=None,
+        latency_summary=None,
+        input_contract_version: str = "1",
+        output_contract_version: str = "1",
+        preprocessing_version: str = "preprocess-v1",
+        payload_ref: str | None = None,
     ) -> RecognitionRunSummary:
         now = _now()
         run = RecognitionRunSummary(
@@ -79,6 +100,13 @@ class InMemoryRecognitionRunLog:
             started_at=now,
             target_scope=target_scope,
             cost_summary=cost_summary,
+            attempt_ids=attempt_ids,
+            usage_summary=usage_summary,
+            latency_summary=latency_summary,
+            input_contract_version=input_contract_version,
+            output_contract_version=output_contract_version,
+            preprocessing_version=preprocessing_version,
+            payload_ref=payload_ref,
         )
         self._runs[run.recognition_run_id] = run
         return run
@@ -88,6 +116,13 @@ class InMemoryRecognitionRunLog:
         recognition_run_id: str,
         model_name: str | None = None,
         model_version: str | None = None,
+        attempt_ids: tuple[str, ...] | None = None,
+        usage_summary=None,
+        latency_summary=None,
+        payload_ref: str | None = None,
+        input_contract_version: str | None = None,
+        output_contract_version: str | None = None,
+        preprocessing_version: str | None = None,
     ) -> RecognitionRunSummary:
         run = self.get_run(recognition_run_id)
         updated = RecognitionRunSummary(
@@ -106,6 +141,25 @@ class InMemoryRecognitionRunLog:
             finished_at=_now(),
             target_scope=run.target_scope,
             cost_summary=run.cost_summary,
+            attempt_ids=run.attempt_ids if attempt_ids is None else tuple(attempt_ids),
+            usage_summary=run.usage_summary if usage_summary is None else usage_summary,
+            latency_summary=run.latency_summary if latency_summary is None else latency_summary,
+            input_contract_version=(
+                run.input_contract_version
+                if input_contract_version is None
+                else input_contract_version
+            ),
+            output_contract_version=(
+                run.output_contract_version
+                if output_contract_version is None
+                else output_contract_version
+            ),
+            preprocessing_version=(
+                run.preprocessing_version
+                if preprocessing_version is None
+                else preprocessing_version
+            ),
+            payload_ref=run.payload_ref if payload_ref is None else payload_ref,
         )
         self._runs[recognition_run_id] = updated
         return updated

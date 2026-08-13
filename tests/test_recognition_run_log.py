@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from drawing_graph.recognition_run_log import InMemoryRecognitionRunLog
+from drawing_graph.recognition_models import RecognitionLatencySummary, RecognitionProviderUsage
 from drawing_graph.tool_models import ToolModelError
 
 
@@ -94,6 +95,45 @@ class RecognitionRunLogTest(unittest.TestCase):
             )
 
         self.assertEqual("invalid_run_type", error.exception.category)
+
+    def test_run_summary_carries_execution_audit_defaults(self):
+        log = InMemoryRecognitionRunLog()
+        run = log.create_run("page:1", "default", "p1", {}, True)
+
+        self.assertEqual((), run.attempt_ids)
+        self.assertIsNone(run.usage_summary)
+        self.assertIsNone(run.latency_summary)
+        self.assertIsNone(run.payload_ref)
+        self.assertEqual("1", run.input_contract_version)
+        self.assertEqual("1", run.output_contract_version)
+        self.assertEqual("preprocess-v1", run.preprocessing_version)
+
+    def test_complete_run_carries_attempt_usage_latency_and_payload(self):
+        log = InMemoryRecognitionRunLog()
+        run = log.create_run("page:1", "default", "p1", {}, True)
+        usage = RecognitionProviderUsage(input_tokens=10, output_tokens=5, status="available")
+        latency = RecognitionLatencySummary(provider_ms=10.0, total_ms=10.0)
+
+        completed = log.complete_run(
+            run.recognition_run_id,
+            model_name="fake",
+            model_version="v1",
+            attempt_ids=("attempt:1",),
+            usage_summary=usage,
+            latency_summary=latency,
+            payload_ref="payload:1",
+            input_contract_version="2",
+            output_contract_version="3",
+            preprocessing_version="preprocess-v2",
+        )
+
+        self.assertEqual(("attempt:1",), completed.attempt_ids)
+        self.assertEqual(10, completed.usage_summary.input_tokens)
+        self.assertEqual(10.0, completed.latency_summary.provider_ms)
+        self.assertEqual("payload:1", completed.payload_ref)
+        self.assertEqual("2", completed.input_contract_version)
+        self.assertEqual("3", completed.output_contract_version)
+        self.assertEqual("preprocess-v2", completed.preprocessing_version)
 
 
 if __name__ == "__main__":

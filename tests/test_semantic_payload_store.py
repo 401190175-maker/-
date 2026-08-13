@@ -59,6 +59,24 @@ class SemanticPayloadStoreTest(unittest.TestCase):
         with self.assertRaises(ToolModelError):
             store.get_payload("")
 
+    def test_store_redacts_secrets_paths_and_bytes_before_persist(self):
+        store = InMemorySemanticPayloadStore()
+        payload_ref = store.put_payload(
+            {
+                "summary": "wall",
+                "api_key": "sk-123",
+                "image_path": r"C:\Users\me\drawings\page-1.png",
+                "image_bytes": b"\x89PNG",
+            },
+            "hash:redacted",
+        )
+
+        stored = store.get_payload(payload_ref)
+        self.assertEqual("wall", stored["summary"])
+        self.assertEqual("<redacted>", stored["api_key"])
+        self.assertEqual("<redacted>", stored["image_path"])
+        self.assertEqual("<redacted>", stored["image_bytes"])
+
 
 if __name__ == "__main__":
     unittest.main()

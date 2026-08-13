@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -63,6 +65,8 @@ class SemanticRecognitionService:
         task_registry: RecognitionTaskRegistry | None = None,
         usage_meter: RecognitionUsageMeter | None = None,
         rate_card: RecognitionRateCard | None = None,
+        payload_store: object | None = None,
+        attempt_log: object | None = None,
     ):
         if execution_service is None:
             provider = client or FakeMultimodalRecognitionClient()
@@ -81,6 +85,8 @@ class SemanticRecognitionService:
             currency="USD",
             version_id="unversioned",
         )
+        self.payload_store = payload_store
+        self.attempt_log = attempt_log
 
     def recognize_page(
         self,
@@ -179,6 +185,10 @@ class SemanticRecognitionService:
                 raise ToolModelError("RUN_LOG_UNAVAILABLE", "recognition run log is not configured")
             if self.semantic_repository is None:
                 raise ToolModelError("SEMANTIC_EVIDENCE_UNAVAILABLE", "semantic evidence repository is not configured")
+            if self.attempt_log is None:
+                raise ToolModelError("ATTEMPT_LOG_UNAVAILABLE", "recognition attempt log is not configured")
+            if self.payload_store is None:
+                raise ToolModelError("PAYLOAD_STORE_UNAVAILABLE", "semantic payload store is not configured")
             run_summary = self.run_log.create_run(
                 page_id=page_facts.page_id,
                 model_profile=model_profile,
@@ -265,23 +275,50 @@ class SemanticRecognitionService:
                 )
                 if element_evidence:
                     self.cache_service.put(cache_key, element_evidence)
+        payload_ref = None
         if write_back:
             try:
+                for attempt in attempts:
+                    self.attempt_log.append_attempt(attempt)
+                envelope, content_hash = _build_payload_envelope(
+                    page_id=page_facts.page_id,
+                    run_id=run_id,
+                    status=result_status,
+                    execution_results=execution_results,
+                    summary=summary,
+                    candidate_evidence=candidate_evidence,
+                )
+                payload_ref = self.payload_store.put_payload(envelope, content_hash, contract_version="1")
                 if observations:
                     self.semantic_repository.save_observations(observations)
                 if interpretations:
                     self.semantic_repository.save_interpretations(interpretations)
+                self.run_log.complete_run(
+                    run_id,
+                    model_name=attempts[0].model_name if attempts else None,
+                    model_version=attempts[0].model_name if attempts else None,
+                    attempt_ids=tuple(attempt.attempt_id for attempt in attempts),
+                    usage_summary=usage_summary,
+                    latency_summary=latency_summary,
+                    payload_ref=payload_ref,
+                    input_contract_version="1",
+                    output_contract_version=(
+                        pending_targets[0].output_contract_version
+                        if pending_targets
+                        else "1"
+                    ),
+                    preprocessing_version="preprocess-v1",
+                )
             except Exception as exc:
                 if run_summary is not None:
                     self.run_log.fail_run(run_id, _error_summary(exc))
-                if isinstance(exc, ToolModelError) and exc.category == "SEMANTIC_EVIDENCE_UNAVAILABLE":
+                if isinstance(exc, ToolModelError) and exc.category in {
+                    "SEMANTIC_EVIDENCE_UNAVAILABLE",
+                    "PAYLOAD_STORE_UNAVAILABLE",
+                    "ATTEMPT_LOG_UNAVAILABLE",
+                }:
                     raise
                 raise ToolModelError("SEMANTIC_EVIDENCE_UNAVAILABLE", "semantic evidence write-back failed") from exc
-            self.run_log.complete_run(
-                run_id,
-                model_name=None,
-                model_version=None,
-            )
         return SemanticRecognitionResult(
             recognition_run_id=run_id,
             status=result_status,
@@ -295,7 +332,7 @@ class SemanticRecognitionService:
             usage_summary=usage_summary,
             cost_summary=cost_summary,
             latency_summary=latency_summary,
-            payload_ref=None,
+            payload_ref=payload_ref,
             warnings=warnings,
         )
 
@@ -593,6 +630,50 @@ def _collect_candidate_evidence(
                     )
                 )
     return tuple(evidence)
+
+
+def _build_payload_envelope(
+    *,
+    page_id: str,
+    run_id: str,
+    status: str,
+    execution_results: list[RecognitionExecutionResult],
+    summary,
+    candidate_evidence,
+) -> tuple[dict, str]:
+    """Build a redactable, immutable audit envelope for one logical run."""
+
+    envelope = {
+        "run_id": run_id,
+        "page_id": page_id,
+        "status": status,
+        "execution_results": [
+            {
+                "status": result.status.value,
+                "task_types": sorted(
+                    {str(output.task_type.value) for output in result.validated_outputs}
+                ),
+                "validated_outputs": [
+                    {
+                        "task_type": output.task_type.value,
+                        "target_id": output.target_id,
+                        "target_type": output.target_type,
+                        "status": output.status.value,
+                        "output": dict(output.output),
+                        "confidence": output.confidence,
+                        "uncertainties": list(output.uncertainties),
+                    }
+                    for output in result.validated_outputs
+                ],
+                "attempt_ids": [attempt.attempt_id for attempt in result.attempts],
+            }
+            for result in execution_results
+        ],
+        "summary": asdict(summary) if summary is not None else None,
+        "candidate_evidence": [asdict(evidence) for evidence in candidate_evidence],
+    }
+    content = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return envelope, hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
 def _project_text_observation(

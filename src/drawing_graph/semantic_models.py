@@ -7,6 +7,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from .recognition_models import RecognitionLatencySummary, RecognitionProviderUsage
 from .tool_models import BBox, ToolModelError
 
 
@@ -286,9 +287,25 @@ class RecognitionRunSummary:
     finished_at: str | None = None
     target_scope: str | None = None
     cost_summary: Mapping[str, Any] | None = None
+    attempt_ids: tuple[str, ...] = ()
+    usage_summary: RecognitionProviderUsage | None = None
+    latency_summary: RecognitionLatencySummary | None = None
+    input_contract_version: str = "1"
+    output_contract_version: str = "1"
+    preprocessing_version: str = "preprocess-v1"
+    payload_ref: str | None = None
 
     def __post_init__(self) -> None:
-        for field_name in ("recognition_run_id", "run_type", "page_id", "model_profile", "prompt_version"):
+        for field_name in (
+            "recognition_run_id",
+            "run_type",
+            "page_id",
+            "model_profile",
+            "prompt_version",
+            "input_contract_version",
+            "output_contract_version",
+            "preprocessing_version",
+        ):
             _require_text(getattr(self, field_name), field_name)
         if self.run_type not in {"recognition", "interpretation", "candidate_review"}:
             raise ToolModelError("invalid_run_type", "run_type must be a supported recognition run type")
@@ -308,6 +325,15 @@ class RecognitionRunSummary:
             raise ToolModelError("invalid_input_refs", "input_refs must be a mapping")
         if self.cost_summary is not None and not isinstance(self.cost_summary, Mapping):
             raise ToolModelError("invalid_cost_summary", "cost_summary must be a mapping when provided")
+        object.__setattr__(self, "attempt_ids", _read_text_tuple(self.attempt_ids, "attempt_ids"))
+        if self.usage_summary is not None and not isinstance(self.usage_summary, RecognitionProviderUsage):
+            raise ToolModelError("invalid_usage_summary", "usage_summary must be a RecognitionProviderUsage or None")
+        if self.latency_summary is not None and not isinstance(self.latency_summary, RecognitionLatencySummary):
+            raise ToolModelError(
+                "invalid_latency_summary",
+                "latency_summary must be a RecognitionLatencySummary or None",
+            )
+        _require_optional_text(self.payload_ref, "payload_ref")
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "input_refs", MappingProxyType(dict(self.input_refs)))
         if self.cost_summary is not None:

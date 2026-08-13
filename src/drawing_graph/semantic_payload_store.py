@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol
 
+from .recognition_redaction import RecognitionRedactor
 from .tool_models import ToolModelError
 
 
@@ -37,13 +38,14 @@ class InMemorySemanticPayloadStore:
         contract_version: str = "1",
     ) -> str:
         _require_mapping(payload, "payload")
+        redacted = RecognitionRedactor().redact_payload(payload)
         _require_text(content_hash, "content_hash")
         _require_text(contract_version, "contract_version")
         existing_ref = self._refs_by_hash.get(content_hash)
         if existing_ref is not None:
             return existing_ref
         payload_ref = f"payload:{content_hash}"
-        self._payloads[payload_ref] = _freeze(payload)
+        self._payloads[payload_ref] = _freeze(redacted)
         self._meta[payload_ref] = {
             "content_hash": content_hash,
             "contract_version": contract_version,
