@@ -1,4 +1,4 @@
-"""Qwen multimodal recognition client using DashScope's OpenAI-compatible API."""
+"""Qwen/DashScope provider adapter for prepared-image recognition calls."""
 
 from __future__ import annotations
 
@@ -6,11 +6,13 @@ import base64
 import json
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 import httpx
 
+from .recognition_image_preprocessing import PreparedRecognitionImage
+from .recognition_models import RecognitionProviderUsage, UsageStatus
 from .semantic_client import RecognitionClientRequest, RecognitionClientResult
 from .tool_models import ToolModelError
 
@@ -21,7 +23,7 @@ DEFAULT_QWEN_MODEL = "qwen3-vl-plus"
 
 @dataclass(frozen=True)
 class QwenRecognitionConfig:
-    """Runtime settings for the Qwen recognition client.
+    """Runtime settings for the Qwen provider adapter.
 
     The API key stays inside this provider config and is excluded from repr so
     it cannot leak through ordinary debug output.
@@ -60,7 +62,7 @@ class QwenRecognitionConfig:
 
 
 class QwenMultimodalRecognitionClient:
-    """Multimodal recognition client backed by Qwen-VL compatible chat completions."""
+    """Prepared-image provider adapter for DashScope chat completions."""
 
     def __init__(self, config: QwenRecognitionConfig, http_client: httpx.Client | None = None):
         self.config = config
@@ -69,8 +71,9 @@ class QwenMultimodalRecognitionClient:
         self.model_version = config.model
 
     def recognize(self, request: RecognitionClientRequest) -> RecognitionClientResult:
-        """Call Qwen and return the existing semantic recognition result DTO."""
+        """Call Qwen with prepared images and return the adapted provider result."""
 
+        _validate_base_url(self.config.base_url)
         payload = self._build_payload(request)
         try:
             response = self.http_client.post(
@@ -80,69 +83,51 @@ class QwenMultimodalRecognitionClient:
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=self.config.timeout_seconds,
+                timeout=request.timeout_seconds,
+                follow_redirects=True,
             )
         except httpx.TimeoutException as exc:
             raise ToolModelError("RECOGNITION_FAILED", "recognition client timed out") from exc
         except httpx.HTTPError as exc:
             raise ToolModelError("RECOGNITION_FAILED", "recognition provider request failed") from exc
+        _reject_insecure_response_url(response)
         if response.status_code >= 400:
             raise ToolModelError("RECOGNITION_FAILED", "recognition provider returned an error")
         try:
             provider_payload = response.json()
             content = _extract_message_content(provider_payload)
             parsed = _parse_structured_content(content)
-            status = str(parsed.get("status", "succeeded"))
-            observations = _read_mapping_sequence(parsed.get("observations", ()), "observations")
-            interpretations = _read_mapping_sequence(parsed.get("interpretations", ()), "interpretations")
+            model_name = str(provider_payload.get("model") or self.config.model)
+            request_id = provider_payload.get("id")
+            usage = _parse_usage(provider_payload.get("usage"))
         except (KeyError, TypeError, ValueError, ToolModelError) as exc:
             raise ToolModelError("RECOGNITION_FAILED", "recognition client returned unparseable output") from exc
         return RecognitionClientResult(
-            status=status,
-            observations=observations,
-            interpretations=interpretations,
-            error_code=parsed.get("error_code"),
-            error_message=parsed.get("error_message"),
-            model_name=str(provider_payload.get("model") or self.config.model),
-            model_version=str(parsed.get("model_version") or provider_payload.get("model") or self.config.model),
+            payload=parsed,
+            provider_request_id=str(request_id) if request_id is not None else None,
+            model_name=model_name,
+            model_version=model_name,
+            usage=usage,
         )
 
     def _build_payload(self, request: RecognitionClientRequest) -> Mapping[str, Any]:
-        image_url = _image_data_url(request.image_path)
-        target_lines = [
-            (
-                f"- id={target_id}; type={target_type}; "
-                f"bbox=({bbox.x_min},{bbox.y_min},{bbox.x_max},{bbox.y_max}); "
-                f"normalized_bbox=({normalized.x_min},{normalized.y_min},{normalized.x_max},{normalized.y_max})"
-            )
-            for target_id, target_type, bbox, normalized in request.targets
+        content_parts = [
+            {"type": "text", "text": request.rendered_prompt.user_instruction},
         ]
-        # Keep the schema in the prompt explicit so provider output can be
-        # validated by the existing semantic service without provider-specific DTOs.
-        user_text = "\n".join(
-            (
-                "Recognize the requested drawing elements from this page image.",
-                f"page_id: {request.page_id}",
-                f"prompt_version: {request.prompt_version}",
-                "Return only JSON with keys: status, observations, interpretations, model_version.",
-                "Each observation must include target_element_id, target_element_type, raw_text, normalized_text, confidence, status.",
-                "Targets:",
-                *(target_lines or ["- no explicit targets"]),
-            )
+        content_parts.extend(
+            {"type": "image_url", "image_url": {"url": _image_data_url(image)}}
+            for image in request.prepared_images
         )
         return {
             "model": self.config.model,
             "messages": (
                 {
                     "role": "system",
-                    "content": "You are a construction drawing multimodal recognition engine. Return strict JSON only.",
+                    "content": request.rendered_prompt.system_instruction,
                 },
                 {
                     "role": "user",
-                    "content": (
-                        {"type": "text", "text": user_text},
-                        {"type": "image_url", "image_url": {"url": image_url}},
-                    ),
+                    "content": tuple(content_parts),
                 },
             ),
             "temperature": 0,
@@ -153,22 +138,47 @@ def _chat_completions_url(base_url: str) -> str:
     return base_url.rstrip("/") + "/chat/completions"
 
 
-def _image_data_url(image_path: str) -> str:
-    path = Path(image_path)
-    try:
-        payload = base64.b64encode(path.read_bytes()).decode("ascii")
-    except OSError as exc:
-        raise ToolModelError("RECOGNITION_FAILED", "recognition image is not readable") from exc
-    return f"data:{_mime_type(path)};base64,{payload}"
+def _image_data_url(image: PreparedRecognitionImage) -> str:
+    payload = base64.b64encode(image.content).decode("ascii")
+    return f"data:{image.mime};base64,{payload}"
 
 
-def _mime_type(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".jpg", ".jpeg"}:
-        return "image/jpeg"
-    if suffix == ".webp":
-        return "image/webp"
-    return "image/png"
+def _validate_base_url(base_url: str) -> None:
+    parsed = urlsplit(base_url)
+    if parsed.username is not None or parsed.password is not None:
+        raise ToolModelError("INVALID_ARGUMENT", "provider base URL must not embed credentials")
+    host = parsed.hostname
+    if not host:
+        raise ToolModelError("INVALID_ARGUMENT", "provider base URL must include a host")
+    if parsed.scheme != "https" and not _is_loopback(host):
+        raise ToolModelError("INVALID_ARGUMENT", "provider base URL must use HTTPS outside loopback")
+
+
+def _reject_insecure_response_url(response: httpx.Response) -> None:
+    host = response.url.host or ""
+    if response.url.scheme != "https" and not _is_loopback(host):
+        raise ToolModelError("INSECURE_REDIRECT", "provider redirected to a non-HTTPS endpoint")
+
+
+def _is_loopback(host: str) -> bool:
+    lowered = host.strip().lower().rstrip(".")
+    return lowered in {"localhost", "127.0.0.1", "::1"} or lowered.startswith("127.")
+
+
+def _parse_usage(usage: Any) -> RecognitionProviderUsage:
+    if not isinstance(usage, Mapping):
+        return RecognitionProviderUsage(status=UsageStatus.UNAVAILABLE)
+    input_tokens = usage.get("prompt_tokens")
+    output_tokens = usage.get("completion_tokens")
+    image_units = usage.get("image_units")
+    if input_tokens is None and output_tokens is None:
+        return RecognitionProviderUsage(status=UsageStatus.UNAVAILABLE)
+    return RecognitionProviderUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        image_units=image_units,
+        status=UsageStatus.AVAILABLE,
+    )
 
 
 def _extract_message_content(provider_payload: Mapping[str, Any]) -> str:
@@ -195,16 +205,6 @@ def _parse_structured_content(content: str) -> Mapping[str, Any]:
     if not isinstance(parsed, Mapping):
         raise ToolModelError("RECOGNITION_FAILED", "recognition content must be a JSON object")
     return parsed
-
-
-def _read_mapping_sequence(value: Any, field_name: str) -> tuple[Mapping[str, Any], ...]:
-    if value is None:
-        return ()
-    if not isinstance(value, (list, tuple)):
-        raise ToolModelError("RECOGNITION_FAILED", f"{field_name} must be a sequence")
-    if not all(isinstance(item, Mapping) for item in value):
-        raise ToolModelError("RECOGNITION_FAILED", f"{field_name} must contain objects")
-    return tuple(dict(item) for item in value)
 
 
 def _require_text(value: object, field_name: str) -> None:
