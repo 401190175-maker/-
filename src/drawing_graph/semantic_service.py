@@ -273,7 +273,7 @@ class SemanticRecognitionService:
                     for item in (*observations, *interpretations)
                     if _evidence_element_id(item) == element_id
                 )
-                if element_evidence:
+                if cache_key is not None and element_evidence:
                     self.cache_service.put(cache_key, element_evidence)
         payload_ref = None
         if write_back:
@@ -293,6 +293,26 @@ class SemanticRecognitionService:
                     self.semantic_repository.save_observations(observations)
                 if interpretations:
                     self.semantic_repository.save_interpretations(interpretations)
+            except Exception as exc:
+                if run_summary is not None:
+                    self.run_log.fail_run(run_id, _error_summary(exc))
+                return SemanticRecognitionResult(
+                    recognition_run_id=run_id,
+                    status=result_status,
+                    observations=observations,
+                    persisted=False,
+                    error_summary=_error_summary(exc),
+                    interpretations=interpretations,
+                    summary=summary,
+                    candidate_evidence=candidate_evidence,
+                    attempts=attempts,
+                    usage_summary=usage_summary,
+                    cost_summary=cost_summary,
+                    latency_summary=latency_summary,
+                    payload_ref=payload_ref,
+                    warnings=warnings,
+                )
+            try:
                 self.run_log.complete_run(
                     run_id,
                     model_name=attempts[0].model_name if attempts else None,
@@ -312,13 +332,22 @@ class SemanticRecognitionService:
             except Exception as exc:
                 if run_summary is not None:
                     self.run_log.fail_run(run_id, _error_summary(exc))
-                if isinstance(exc, ToolModelError) and exc.category in {
-                    "SEMANTIC_EVIDENCE_UNAVAILABLE",
-                    "PAYLOAD_STORE_UNAVAILABLE",
-                    "ATTEMPT_LOG_UNAVAILABLE",
-                }:
-                    raise
-                raise ToolModelError("SEMANTIC_EVIDENCE_UNAVAILABLE", "semantic evidence write-back failed") from exc
+                return SemanticRecognitionResult(
+                    recognition_run_id=run_id,
+                    status=result_status,
+                    observations=observations,
+                    persisted=False,
+                    error_summary=_error_summary(exc),
+                    interpretations=interpretations,
+                    summary=summary,
+                    candidate_evidence=candidate_evidence,
+                    attempts=attempts,
+                    usage_summary=usage_summary,
+                    cost_summary=cost_summary,
+                    latency_summary=latency_summary,
+                    payload_ref=payload_ref,
+                    warnings=warnings,
+                )
         return SemanticRecognitionResult(
             recognition_run_id=run_id,
             status=result_status,
@@ -464,16 +493,15 @@ def _merge_execution_status(execution_results: list[RecognitionExecutionResult])
     if not execution_results:
         return "succeeded"
     statuses = [str(result.status.value) for result in execution_results]
-    failed = {"contract_failed", "provider_failed", "deadline_exceeded", "recognition_failed"}
-    if any(status in failed for status in statuses):
-        if any(status == "succeeded" for status in statuses):
-            return "partial"
-        return statuses[0]
+    if all(status == "succeeded" for status in statuses):
+        return "succeeded"
+    if any(status == "succeeded" for status in statuses):
+        return "partial"
     if any(status == "ambiguous" for status in statuses):
         return "ambiguous"
     if any(status == "not_found" for status in statuses):
         return "not_found"
-    return "succeeded"
+    return statuses[0]
 
 
 def _project_execution_results(

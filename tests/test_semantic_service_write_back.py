@@ -97,6 +97,16 @@ class RelationWriteSpy:
         self.calls.append(("promote_candidate_relation", args, kwargs))
 
 
+class FailingInterpretationRepository(InMemorySemanticEvidenceRepository):
+    def save_interpretations(self, interpretations):
+        raise ToolModelError("SEMANTIC_EVIDENCE_UNAVAILABLE", "semantic evidence repository is unavailable")
+
+
+class FailingPayloadStore:
+    def put_payload(self, *args, **kwargs):
+        raise ToolModelError("PAYLOAD_STORE_UNAVAILABLE", "payload store is unavailable")
+
+
 def _service(
     *,
     stub,
@@ -293,3 +303,71 @@ class SemanticServiceWriteBackTest(unittest.TestCase):
             if call[0] in {"write_relations", "promote_candidate_relation"}
         ]
         self.assertEqual([], relation_writes)
+
+    def test_persistence_failure_returns_persisted_false_and_keeps_payload_ref(self) -> None:
+        run_log = InMemoryRecognitionRunLog()
+        repository = FailingInterpretationRepository()
+        payload_store = InMemorySemanticPayloadStore()
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:1",
+                    status="succeeded",
+                    validated_outputs=(block_output(),),
+                ),
+            )
+        )
+        service = _service(
+            stub=stub,
+            run_log=run_log,
+            repository=repository,
+            attempt_log=InMemoryRecognitionAttemptLog(),
+            payload_store=payload_store,
+        )
+
+        result = service.recognize_targets(
+            page_facts(),
+            (block_target(),),
+            "default",
+            "prompt-v1",
+            write_back=True,
+        )
+
+        self.assertFalse(result.persisted)
+        self.assertIsNotNone(result.payload_ref)
+        self.assertEqual(1, len(result.interpretations))
+        self.assertEqual("failed", run_log.get_run(result.recognition_run_id).status)
+        self.assertEqual("SEMANTIC_EVIDENCE_UNAVAILABLE", result.error_summary)
+
+    def test_payload_failure_returns_persisted_false_without_payload_ref(self) -> None:
+        run_log = InMemoryRecognitionRunLog()
+        repository = InMemorySemanticEvidenceRepository()
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:1",
+                    status="succeeded",
+                    validated_outputs=(block_output(),),
+                ),
+            )
+        )
+        service = _service(
+            stub=stub,
+            run_log=run_log,
+            repository=repository,
+            attempt_log=InMemoryRecognitionAttemptLog(),
+            payload_store=FailingPayloadStore(),
+        )
+
+        result = service.recognize_targets(
+            page_facts(),
+            (block_target(),),
+            "default",
+            "prompt-v1",
+            write_back=True,
+        )
+
+        self.assertFalse(result.persisted)
+        self.assertIsNone(result.payload_ref)
+        self.assertEqual("PAYLOAD_STORE_UNAVAILABLE", result.error_summary)
+        self.assertEqual("failed", run_log.get_run(result.recognition_run_id).status)

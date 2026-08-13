@@ -732,5 +732,133 @@ class SemanticTransientOutputTests(unittest.TestCase):
         self.assertEqual((), result.warnings)
 
 
+class SemanticPartialResultTests(unittest.TestCase):
+    """Partial runs keep successful evidence and never fabricate failures."""
+
+    def test_mixed_groups_yield_partial_and_keep_success_evidence(self) -> None:
+        facts = page_facts(_element("block:1"), _element("caption:1", "BlockCaption"))
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:1",
+                    status="succeeded",
+                    validated_outputs=(
+                        ValidatedRecognitionOutput(
+                            task_type="block_semantic_identification",
+                            target_id="t1",
+                            target_type="DrawingBlock",
+                            status="succeeded",
+                            output={"interpretation": {"summary": "beam"}},
+                        ),
+                    ),
+                ),
+                RecognitionExecutionResult(recognition_run_id="run:1", status="contract_failed"),
+            )
+        )
+        cache = InMemorySemanticCacheService()
+        service = SemanticRecognitionService(
+            client=None,
+            cache_service=cache,
+            execution_service=stub,
+        )
+        result = service.recognize_targets(
+            facts,
+            (
+                target(target_id="t1", element_id="block:1"),
+                target(
+                    target_id="t2",
+                    element_id="caption:1",
+                    element_type="BlockCaption",
+                    task_type="element_text_observation",
+                ),
+            ),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual("partial", result.status)
+        self.assertEqual(1, len(result.interpretations))
+        self.assertEqual("beam", result.interpretations[0].summary)
+        self.assertEqual((), result.observations)
+
+    def test_all_failed_groups_use_first_failure_status(self) -> None:
+        facts = page_facts(_element("block:1"), _element("caption:1", "BlockCaption"))
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(recognition_run_id="run:1", status="contract_failed"),
+                RecognitionExecutionResult(recognition_run_id="run:1", status="provider_failed"),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+        result = service.recognize_targets(
+            facts,
+            (
+                target(target_id="t1", element_id="block:1"),
+                target(
+                    target_id="t2",
+                    element_id="caption:1",
+                    element_type="BlockCaption",
+                    task_type="element_text_observation",
+                ),
+            ),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual("contract_failed", result.status)
+        self.assertEqual((), result.interpretations)
+
+    def test_success_plus_ambiguous_is_partial(self) -> None:
+        facts = page_facts(_element("block:1"), _element("caption:1", "BlockCaption"))
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:1",
+                    status="succeeded",
+                    validated_outputs=(
+                        ValidatedRecognitionOutput(
+                            task_type="block_semantic_identification",
+                            target_id="t1",
+                            target_type="DrawingBlock",
+                            status="succeeded",
+                            output={"interpretation": {"summary": "beam"}},
+                        ),
+                    ),
+                ),
+                RecognitionExecutionResult(
+                    recognition_run_id="run:1",
+                    status="ambiguous",
+                    validated_outputs=(
+                        ValidatedRecognitionOutput(
+                            task_type="element_text_observation",
+                            target_id="t2",
+                            target_type="BlockCaption",
+                            status="ambiguous",
+                            output={},
+                        ),
+                    ),
+                ),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+        result = service.recognize_targets(
+            facts,
+            (
+                target(target_id="t1", element_id="block:1"),
+                target(
+                    target_id="t2",
+                    element_id="caption:1",
+                    element_type="BlockCaption",
+                    task_type="element_text_observation",
+                ),
+            ),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual("partial", result.status)
+        self.assertEqual(1, len(result.interpretations))
+
+
 if __name__ == "__main__":
     unittest.main()
