@@ -1,11 +1,11 @@
-import sys
-import unittest
-from pathlib import Path
+"""Dry-run contracts: temporary evidence only, zero persistence writes."""
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from __future__ import annotations
+
+import unittest
 
 from drawing_graph.query_ports import FakeDrawingGraphReadPort
-from drawing_graph.semantic_client import FakeMultimodalRecognitionClient
+from drawing_graph.recognition_models import RecognitionExecutionResult, ValidatedRecognitionOutput
 from drawing_graph.semantic_cache import (
     InMemorySemanticCacheService,
     SemanticCacheKeyInput,
@@ -16,6 +16,41 @@ from drawing_graph.semantic_models import TextObservation
 from drawing_graph.semantic_service import SemanticRecognitionService
 from drawing_graph.tool_facade import DrawingGraphToolFacade
 from drawing_graph.tool_models import BBox, ElementEvidence, PageSourceFacts
+
+
+def _element(element_id: str = "block:1", element_type: str = "DrawingBlock") -> ElementEvidence:
+    return ElementEvidence(
+        element_id=element_id,
+        element_type=element_type,
+        source_label=element_id,
+        bbox=BBox(1, 2, 3, 4),
+        normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+    )
+
+
+def page_facts(*elements: ElementEvidence) -> PageSourceFacts:
+    return PageSourceFacts(
+        page_id="page:1",
+        image_path="road_24.png",
+        elements=tuple(elements or (_element(),)),
+        image_size=(10, 10),
+        image_hash="hash:provided",
+    )
+
+
+class StubExecutionService:
+    def __init__(self, results=None):
+        self.calls = []
+        self.results = list(results or [])
+
+    def execute(self, request, page_facts, execution_policy=None):
+        self.calls.append(request)
+        if self.results:
+            return self.results.pop(0)
+        return RecognitionExecutionResult(
+            recognition_run_id=request.recognition_run_id,
+            status="succeeded",
+        )
 
 
 class SpyRepository:
@@ -42,18 +77,26 @@ class RecordingInputBuilder:
         return self.builder.build_input(page_facts, element_id)
 
 
-class FailingClientOnCall:
-    def __init__(self):
-        self.requests = []
-        self.model_name = "fake-multimodal"
-        self.model_version = "fake-v1"
+def observation_output() -> ValidatedRecognitionOutput:
+    return ValidatedRecognitionOutput(
+        task_type="element_text_observation",
+        target_id="target:block:1",
+        target_type="DrawingBlock",
+        status="succeeded",
+        output={
+            "observations": [
+                {
+                    "raw_text": "A1",
+                    "normalized_text": "A1",
+                    "confidence": 0.9,
+                    "status": "confirmed",
+                }
+            ]
+        },
+    )
 
-    def recognize(self, request):
-        self.requests.append(request)
-        raise AssertionError("client must not be called on cache hit")
 
-
-def cached_observation():
+def cached_observation() -> TextObservation:
     return TextObservation(
         observation_id="obs:cached:block:1",
         recognition_run_id="run:cached",
@@ -74,55 +117,53 @@ def cached_observation():
     )
 
 
-class SemanticServiceDryRunTest(unittest.TestCase):
-    def test_dry_run_returns_temporary_observations_without_persistence(self):
-        facts = PageSourceFacts(
-            page_id="page:1",
-            image_path="road_24.png",
-            elements=(
-                ElementEvidence(
-                    element_id="block:1",
-                    element_type="DrawingBlock",
-                    source_label="block",
-                    bbox=BBox(1, 2, 3, 4),
-                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
-                ),
-            ),
+def expected_cache_key() -> str:
+    return build_semantic_cache_key(
+        SemanticCacheKeyInput(
+            image_hash="hash:provided",
+            bbox=(1, 2, 3, 4),
+            target_element_id="block:1",
+            task_type="element_text_observation",
+            model_profile="default",
+            model_version="unknown",
+            prompt_version="p1",
+            preprocessing_version="preprocess-v1",
+            normalization_rule_version="normalize-v1",
+            contract_version="1",
         )
-        spy = SpyRepository()
-        service = SemanticRecognitionService(
-            client=FakeMultimodalRecognitionClient(
-                outputs=[
-                    {
-                        "target_element_id": "block:1",
-                        "target_element_type": "DrawingBlock",
-                        "raw_text": "A1",
-                        "normalized_text": "A1",
-                        "confidence": 0.9,
-                        "status": "confirmed",
-                    }
-                ]
-            ),
-            run_log=spy,
-            semantic_repository=spy,
+    )
+
+
+class SemanticServiceDryRunTest(unittest.TestCase):
+    def _service(self, stub, *, cache=None, input_builder=None, run_log=None, repository=None):
+        return SemanticRecognitionService(
+            client=None,
+            run_log=run_log or SpyRepository(),
+            semantic_repository=repository or SpyRepository(),
+            input_builder=input_builder,
+            cache_service=cache,
+            execution_service=stub,
         )
 
-        result = service.recognize_page(facts, target_types=("DrawingBlock",), model_profile="default", prompt_version="p1")
+    def test_dry_run_returns_temporary_observations_without_persistence(self):
+        stub = StubExecutionService(
+            results=(RecognitionExecutionResult(recognition_run_id="run:temp:1", status="succeeded", validated_outputs=(observation_output(),)),)
+        )
+        service = self._service(stub)
+
+        result = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
 
         self.assertFalse(result.persisted)
         self.assertTrue(result.recognition_run_id.startswith("run:temp:"))
         self.assertEqual("block:1", result.observations[0].target_element_id)
-        self.assertEqual([], spy.calls)
+        self.assertEqual([], service.run_log.calls)
+        self.assertEqual([], service.semantic_repository.calls)
 
     def test_facade_can_run_dry_run_recognition_through_injected_service(self):
-        facts = PageSourceFacts(
-            page_id="page:1",
-            image_path="road_24.png",
-            elements=(),
-        )
+        stub = StubExecutionService()
         facade = DrawingGraphToolFacade(
-            read_port=FakeDrawingGraphReadPort(source_facts={"page:1": facts}),
-            semantic_service=SemanticRecognitionService(client=FakeMultimodalRecognitionClient()),
+            read_port=FakeDrawingGraphReadPort(source_facts={"page:1": page_facts()}),
+            semantic_service=SemanticRecognitionService(client=None, execution_service=stub),
         )
 
         result = facade.recognize_page_semantics("page:1", target_types=("DrawingBlock",))
@@ -131,149 +172,49 @@ class SemanticServiceDryRunTest(unittest.TestCase):
         self.assertEqual("succeeded", result.status)
 
     def test_dry_run_builds_image_inputs_and_returns_temporary_evidence_without_writes(self):
-        facts = PageSourceFacts(
-            page_id="page:1",
-            image_path="road_24.png",
-            elements=(
-                ElementEvidence(
-                    element_id="block:1",
-                    element_type="DrawingBlock",
-                    source_label="block",
-                    bbox=BBox(1, 2, 3, 4),
-                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
-                ),
-            ),
+        stub = StubExecutionService(
+            results=(RecognitionExecutionResult(recognition_run_id="run:temp:1", status="succeeded", validated_outputs=(observation_output(),)),)
         )
-        spy = SpyRepository()
         input_builder = RecordingInputBuilder()
-        service = SemanticRecognitionService(
-            client=FakeMultimodalRecognitionClient(
-                outputs=[
-                    {
-                        "target_element_id": "block:1",
-                        "target_element_type": "DrawingBlock",
-                        "raw_text": "A1",
-                        "normalized_text": "A1",
-                        "confidence": 0.9,
-                        "status": "confirmed",
-                    }
-                ],
-                interpretations=[
-                    {
-                        "target_element_id": "block:1",
-                        "target_element_type": "DrawingBlock",
-                        "summary": "wall block",
-                        "interpreted_type": "structural_wall",
-                        "analysis_status": "interpreted",
-                        "supported_by_observation_ids": ("obs:temp:1",),
-                    }
-                ],
-            ),
-            run_log=spy,
-            semantic_repository=spy,
-            input_builder=input_builder,
-        )
+        service = self._service(stub, input_builder=input_builder)
 
-        result = service.recognize_page(facts, target_types=("DrawingBlock",), model_profile="default", prompt_version="p1")
+        result = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
 
         self.assertFalse(result.persisted)
         self.assertEqual(["block:1"], input_builder.build_calls)
-        self.assertEqual("block:1", result.observations[0].target_element_id)
-        self.assertEqual("wall block", result.interpretations[0].summary)
-        self.assertEqual("structural_wall", result.interpretations[0].interpreted_type)
-        self.assertEqual([], spy.calls)
+        self.assertEqual("A1", result.observations[0].raw_text)
+        self.assertEqual([], service.run_log.calls)
+        self.assertEqual([], service.semantic_repository.calls)
 
-    def test_dry_run_reuses_valid_cache_without_calling_client(self):
-        facts = PageSourceFacts(
-            page_id="page:1",
-            image_path="road_24.png",
-            elements=(
-                ElementEvidence(
-                    element_id="block:1",
-                    element_type="DrawingBlock",
-                    source_label="block",
-                    bbox=BBox(1, 2, 3, 4),
-                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
-                ),
-            ),
-        )
-        client = FakeMultimodalRecognitionClient(
-            outputs=[
-                {
-                    "target_element_id": "block:1",
-                    "target_element_type": "DrawingBlock",
-                    "raw_text": "A1",
-                    "normalized_text": "A1",
-                    "confidence": 0.9,
-                    "status": "confirmed",
-                }
-            ]
+    def test_dry_run_reuses_valid_cache_without_calling_execution_twice(self):
+        stub = StubExecutionService(
+            results=(RecognitionExecutionResult(recognition_run_id="run:temp:1", status="succeeded", validated_outputs=(observation_output(),)),)
         )
         cache = InMemorySemanticCacheService()
-        input_builder = RecordingInputBuilder()
-        service = SemanticRecognitionService(
-            client=client,
-            run_log=SpyRepository(),
-            semantic_repository=SpyRepository(),
-            input_builder=input_builder,
-            cache_service=cache,
-        )
-        first = service.recognize_page(facts, ("DrawingBlock",), "default", "p1")
-        self.assertEqual(1, len(client.requests))
-        second = service.recognize_page(facts, ("DrawingBlock",), "default", "p1")
+        service = self._service(stub, cache=cache, input_builder=RecordingInputBuilder())
+
+        first = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
+        self.assertEqual(1, len(stub.calls))
+        second = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
 
         self.assertFalse(second.persisted)
-        self.assertEqual(1, len(client.requests))
+        self.assertEqual(1, len(stub.calls))
         self.assertEqual("block:1", second.observations[0].target_element_id)
         self.assertEqual(first.observations[0].cache_key, second.observations[0].cache_key)
 
-    def test_dry_run_cache_hit_never_calls_client_or_writes(self):
-        facts = PageSourceFacts(
-            page_id="page:1",
-            image_path="road_24.png",
-            elements=(
-                ElementEvidence(
-                    element_id="block:1",
-                    element_type="DrawingBlock",
-                    source_label="block",
-                    bbox=BBox(1, 2, 3, 4),
-                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
-                ),
-            ),
-        )
-        client = FailingClientOnCall()
-        spy = SpyRepository()
+    def test_dry_run_cache_hit_never_calls_execution_or_writes(self):
         cache = InMemorySemanticCacheService()
-        cache.put(
-            build_semantic_cache_key(
-                SemanticCacheKeyInput(
-                    image_hash="hash:provided",
-                    bbox=(1, 2, 3, 4),
-                    target_element_id="block:1",
-                    task_type="text_observation",
-                    model_profile="default",
-                    model_version="fake-v1",
-                    prompt_version="p1",
-                    preprocessing_version="preprocess-v1",
-                    normalization_rule_version="normalize-v1",
-                    contract_version="1",
-                )
-            ),
-            (cached_observation(),),
-        )
-        service = SemanticRecognitionService(
-            client=client,
-            run_log=spy,
-            semantic_repository=spy,
-            input_builder=RecordingInputBuilder(),
-            cache_service=cache,
-        )
-        result = service.recognize_page(facts, ("DrawingBlock",), "default", "p1")
+        cache.put(expected_cache_key(), (cached_observation(),))
+        stub = StubExecutionService()
+        service = self._service(stub, cache=cache, input_builder=RecordingInputBuilder())
 
-        self.assertEqual([], client.requests)
+        result = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
+
+        self.assertEqual([], stub.calls)
         self.assertFalse(result.persisted)
         self.assertEqual("obs:cached:block:1", result.observations[0].observation_id)
-        self.assertEqual([], spy.calls)
+        self.assertEqual([], service.run_log.calls)
+        self.assertEqual([], service.semantic_repository.calls)
 
 
 if __name__ == "__main__":
