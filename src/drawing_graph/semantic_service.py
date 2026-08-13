@@ -220,6 +220,15 @@ class SemanticRecognitionService:
             if isinstance(exc, ToolModelError):
                 raise
             raise ToolModelError("RECOGNITION_FAILED", "semantic recognition failed") from exc
+        if self.cache_service is not None:
+            for element_id, cache_key in cache_keys.items():
+                element_evidence = tuple(
+                    item
+                    for item in (*observations, *interpretations)
+                    if _evidence_element_id(item) == element_id
+                )
+                if element_evidence:
+                    self.cache_service.put(cache_key, element_evidence)
         if write_back:
             try:
                 if observations:

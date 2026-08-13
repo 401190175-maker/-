@@ -149,6 +149,23 @@ def expected_cache_key() -> str:
     )
 
 
+def expected_cache_key_for_block(element_id: str) -> str:
+    return build_semantic_cache_key(
+        SemanticCacheKeyInput(
+            image_hash="hash:provided",
+            bbox=(1, 2, 3, 4),
+            target_element_id=element_id,
+            task_type="element_text_observation",
+            model_profile="default",
+            model_version="fake-v1",
+            prompt_version="prompt-v1",
+            preprocessing_version="preprocess-v1",
+            normalization_rule_version="normalize-v1",
+            contract_version="1",
+        )
+    )
+
+
 class SemanticExecutionGroupingTests(unittest.TestCase):
     """Cache-miss targets group by the execution compatibility key."""
 
@@ -285,6 +302,83 @@ class PreExecutionCacheCheckTests(unittest.TestCase):
         self.assertEqual([], self.failing_client.requests)
         self.assertEqual([], self.run_log.calls)
         self.assertFalse(result.persisted)
+
+
+class SemanticExecutionCacheOrderTests(unittest.TestCase):
+    """Cache hits precede run, attempt and provider; failures never cached."""
+
+    def _service(self, stub: StubExecutionService, cache=None, run_log=None, client=None) -> SemanticRecognitionService:
+        return SemanticRecognitionService(
+            client=client or FailingClientOnCall(),
+            run_log=run_log or SpyRunLog(),
+            cache_service=cache or InMemorySemanticCacheService(),
+            execution_service=stub,
+            input_builder=RecordingInputBuilder(),
+        )
+
+    def test_cache_hit_never_calls_execution_service_or_run_log(self) -> None:
+        cache = InMemorySemanticCacheService()
+        cache.put(expected_cache_key(), (cached_observation(),))
+        stub = StubExecutionService()
+        run_log = SpyRunLog()
+        result = self._service(stub, cache, run_log).recognize_page(
+            page_facts(_element("block:1")),
+            ("DrawingBlock",),
+            "default",
+            "p1",
+            write_back=True,
+        )
+
+        self.assertEqual([], stub.calls)
+        self.assertEqual([], run_log.calls)
+        self.assertFalse(result.persisted)
+
+    def test_only_cache_misses_are_sent_to_execution_service(self) -> None:
+        cache = InMemorySemanticCacheService()
+        cache.put(expected_cache_key(), (cached_observation(),))
+        stub = StubExecutionService()
+        result = self._service(stub, cache).recognize_page(
+            page_facts(_element("block:1"), _element("block:2")),
+            ("DrawingBlock",),
+            "default",
+            "p1",
+        )
+
+        self.assertEqual(1, len(stub.calls))
+        request = stub.calls[0][0]
+        self.assertEqual(("block:2",), tuple(item.target_element_id for item in request.targets))
+        self.assertEqual("obs:cached:block:1", result.observations[0].observation_id)
+
+    def test_contract_failed_result_never_enters_success_cache(self) -> None:
+        cache = InMemorySemanticCacheService()
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(recognition_run_id="run:1", status="contract_failed"),
+            )
+        )
+        self._service(stub, cache).recognize_targets(
+            page_facts(_element("block:1")),
+            (target(target_id="t1", element_id="block:1"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertIsNone(cache.get(expected_cache_key_for_block("block:1")))
+
+    def test_failed_group_does_not_create_persistent_run_in_dry_run(self) -> None:
+        stub = StubExecutionService(
+            results=(RecognitionExecutionResult(recognition_run_id="run:1", status="provider_failed"),)
+        )
+        run_log = SpyRunLog()
+        result = self._service(stub, run_log=run_log).recognize_targets(
+            page_facts(_element("block:1")),
+            (target(target_id="t1", element_id="block:1"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertFalse(result.persisted)
+        self.assertEqual([], run_log.calls)
 
 
 if __name__ == "__main__":

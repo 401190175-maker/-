@@ -115,6 +115,19 @@ class SemanticCacheTest(unittest.TestCase):
         with self.assertRaises(ToolModelError):
             build_section_match_cache_key(observation_keys="obs:1", candidate_scope="page:1", match_rule_version="v1")
 
+    def test_execution_task_and_contract_versions_participate_in_cache_identity(self):
+        base = build_semantic_cache_key(cache_inputs(task_type="element_text_observation"))
+        changed_contract = build_semantic_cache_key(
+            cache_inputs(task_type="element_text_observation", contract_version="2")
+        )
+        changed_preprocessing = build_semantic_cache_key(
+            cache_inputs(task_type="element_text_observation", preprocessing_version="preprocess-v2")
+        )
+
+        self.assertTrue(base.startswith("semantic:"))
+        self.assertNotEqual(base, changed_contract)
+        self.assertNotEqual(base, changed_preprocessing)
+
 
 if __name__ == "__main__":
     unittest.main()
