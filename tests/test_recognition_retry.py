@@ -17,6 +17,7 @@ from drawing_graph.recognition_models import (
 from drawing_graph.recognition_prompting import RenderedRecognitionPrompt
 from drawing_graph.recognition_retry import (
     RecognitionAttemptExecutor,
+    RecognitionBudgetError,
     RecognitionProviderError,
     RecognitionRetryPolicy,
     classify_http_status,
@@ -197,6 +198,9 @@ class RecognitionAttemptExecutorTests(unittest.TestCase):
         base_backoff_ms: float = 250,
         max_backoff_ms: float = 2000,
         jitter_ratio: float = 0.1,
+        deadline_seconds: float = 120.0,
+        budget: float | None = None,
+        cost_estimator=None,
         clock=None,
         sleeper=None,
         jitter=None,
@@ -207,6 +211,7 @@ class RecognitionAttemptExecutorTests(unittest.TestCase):
             clock=clock or (lambda: 100.0),
             sleeper=sleeper or (lambda delay: sleeps.append(delay)),
             jitter=jitter or (lambda: 0.0),
+            cost_estimator=cost_estimator or (lambda request: 0.0),
         )
         output, attempts = executor.execute(
             provider,
@@ -219,7 +224,8 @@ class RecognitionAttemptExecutorTests(unittest.TestCase):
                 base_backoff_ms=base_backoff_ms,
                 max_backoff_ms=max_backoff_ms,
                 jitter_ratio=jitter_ratio,
-                deadline_seconds=60.0,
+                deadline_seconds=deadline_seconds,
+                estimated_cost_budget=budget,
             ),
         )
         return output, attempts, sleeps, provider
@@ -304,7 +310,11 @@ class RecognitionAttemptExecutorTests(unittest.TestCase):
             _provider_request(),
             spec,
             _validated_request(),
-            RecognitionExecutionPolicy(max_attempts=2, structure_repair_attempts=1),
+            RecognitionExecutionPolicy(
+                max_attempts=2,
+                structure_repair_attempts=1,
+                deadline_seconds=120.0,
+            ),
         )
         self.assertIsNone(output)
         self.assertEqual(1, len(attempts))
@@ -321,9 +331,10 @@ class RecognitionAttemptExecutorTests(unittest.TestCase):
         self.assertEqual(["fp-1", "fp-1"], [request.request_fingerprint for request in provider.requests])
 
     def test_attempt_records_latency(self) -> None:
-        times = iter([100.0, 100.25])
+        times = iter([100.0, 100.0, 100.0, 100.25])
         _, attempts, _, _ = self._execute(
             (_success_payload(),),
+            deadline_seconds=120.0,
             clock=lambda: next(times),
         )
         self.assertAlmostEqual(250.0, attempts[0].latency_ms, places=6)
@@ -333,6 +344,96 @@ class RecognitionAttemptExecutorTests(unittest.TestCase):
             RecognitionRetryPolicy(max_attempts=2, structure_repair_attempts=2)
         with self.assertRaises(ValueError):
             RecognitionRetryPolicy(base_backoff_ms=2000, max_backoff_ms=250)
+
+
+class _Clock:
+    def __init__(self, values):
+        self.values = list(values)
+        self.index = 0
+
+    def __call__(self):
+        value = self.values[self.index]
+        self.index += 1
+        return value
+
+
+class RecognitionExecutionGateTests(unittest.TestCase):
+    """Deadline, attempt and estimated-budget gates run before each call."""
+
+    def test_deadline_exceeded_stops_before_new_call(self) -> None:
+        with self.assertRaises(RecognitionBudgetError) as caught:
+            self._execute(
+                (("http_429", None), _success_payload()),
+                max_attempts=3,
+                deadline_seconds=1.0,
+                clock=_Clock([0.0, 0.0, 0.0, 0.2, 100.0]),
+            )
+        self.assertEqual("deadline_exceeded", caught.exception.category)
+
+    def test_deadline_gate_checks_timeout_and_reserve_before_first_call(self) -> None:
+        provider = FakeMultimodalRecognitionClient(script=(_success_payload(),))
+        executor = RecognitionAttemptExecutor(
+            clock=lambda: 100.0,
+            sleeper=lambda delay: None,
+            jitter=lambda: 0.0,
+        )
+        with self.assertRaises(RecognitionBudgetError) as caught:
+            executor.execute(
+                provider,
+                _provider_request(),
+                page_summary_spec(),
+                _validated_request(),
+                RecognitionExecutionPolicy(
+                    max_attempts=2,
+                    structure_repair_attempts=1,
+                    deadline_seconds=0.2,
+                ),
+            )
+        self.assertEqual("deadline_exceeded", caught.exception.category)
+        self.assertEqual(0, len(provider.requests))
+
+    def test_budget_exhausted_stops_before_new_call(self) -> None:
+        with self.assertRaises(RecognitionBudgetError) as caught:
+            self._execute(
+                (("http_429", None), _success_payload()),
+                max_attempts=3,
+                budget=1.5,
+                cost_estimator=lambda request: 1.0,
+            )
+        self.assertEqual("budget_exceeded", caught.exception.category)
+
+    def test_budget_gate_allows_calls_within_budget(self) -> None:
+        output, attempts, _, provider = self._execute(
+            (_success_payload(),),
+            budget=1.5,
+            cost_estimator=lambda request: 1.0,
+        )
+        self.assertEqual("page text", output.output["summary"])
+        self.assertEqual(1, len(attempts))
+        self.assertEqual(1, len(provider.requests))
+
+    def test_max_attempts_exhaustion_returns_none_without_budget_error(self) -> None:
+        output, attempts, _, provider = self._execute(
+            (("http_429", None), ("http_429", None)),
+            max_attempts=2,
+        )
+        self.assertIsNone(output)
+        self.assertEqual(2, len(attempts))
+        self.assertEqual(2, len(provider.requests))
+
+    def test_gate_does_not_expand_request_scope(self) -> None:
+        _, _, _, provider = self._execute(
+            (("http_429", None), _success_payload()),
+            max_attempts=2,
+        )
+        self.assertEqual(2, len(provider.requests))
+        first, second = provider.requests
+        self.assertEqual(first.request_fingerprint, second.request_fingerprint)
+        self.assertEqual(len(first.prepared_images), len(second.prepared_images))
+        self.assertEqual(first.rendered_prompt.user_instruction, second.rendered_prompt.user_instruction)
+
+    def _execute(self, *args, **kwargs):
+        return RecognitionAttemptExecutorTests()._execute(*args, **kwargs)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,15 @@ from .tool_models import ToolModelError
 
 
 _MAX_RETRY_AFTER_SECONDS = 120.0
+_DEADLINE_MIN_RESERVE_SECONDS = 0.1
+
+
+class RecognitionBudgetError(ValueError):
+    """Raised when deadline, attempts or estimated-budget gates reject a call."""
+
+    def __init__(self, category: str, message: str):
+        self.category = category
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -198,12 +207,14 @@ class RecognitionAttemptExecutor:
         jitter=None,
         output_validator: RecognitionOutputValidator | None = None,
         attempt_id_factory=None,
+        cost_estimator=None,
     ):
         self._clock = clock or time.time
         self._sleeper = sleeper or time.sleep
         self._jitter = jitter or (lambda: 0.0)
         self._output_validator = output_validator or RecognitionOutputValidator()
         self._attempt_id_factory = attempt_id_factory or (lambda: f"attempt:{uuid.uuid4()}")
+        self._cost_estimator = cost_estimator or (lambda request: 0.0)
         self.last_successful_payload: Mapping[str, Any] | None = None
 
     def execute(
@@ -220,7 +231,25 @@ class RecognitionAttemptExecutor:
         attempts: list[RecognitionAttempt] = []
         repair_remaining = policy.structure_repair_attempts
         attempt_number = 1
+        started_at = self._clock()
+        deadline_end = started_at + execution_policy.deadline_seconds
+        spent_estimate = 0.0
         while True:
+            now = self._clock()
+            remaining = deadline_end - now
+            required = provider_request.timeout_seconds + _DEADLINE_MIN_RESERVE_SECONDS
+            if remaining < required:
+                raise RecognitionBudgetError(
+                    "deadline_exceeded",
+                    "remaining deadline is insufficient for another provider attempt",
+                )
+            next_cost = self._cost_estimator(provider_request)
+            budget = execution_policy.estimated_cost_budget
+            if budget is not None and spent_estimate + next_cost > budget:
+                raise RecognitionBudgetError(
+                    "budget_exceeded",
+                    "estimated cost budget is exhausted",
+                )
             attempt, output, retry_after = self._run_attempt(
                 provider,
                 provider_request,
@@ -229,6 +258,7 @@ class RecognitionAttemptExecutor:
                 attempt_number,
             )
             attempts.append(attempt)
+            spent_estimate += next_cost
             if output is not None:
                 return output, tuple(attempts)
             if attempt.status is RecognitionAttemptStatus.CONTRACT_FAILED:
@@ -394,6 +424,7 @@ def _provider_name(provider) -> str:
 
 
 __all__ = (
+    "RecognitionBudgetError",
     "RecognitionAttemptExecutor",
     "RecognitionProviderError",
     "RecognitionRetryPolicy",
