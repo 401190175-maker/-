@@ -6,7 +6,12 @@ import unittest
 from types import SimpleNamespace
 
 from drawing_graph.recognition_execution import MultimodalRecognitionExecutionService
-from drawing_graph.recognition_models import RecognitionExecutionResult, ValidatedRecognitionOutput
+from drawing_graph.recognition_models import (
+    RecognitionAttempt,
+    RecognitionExecutionResult,
+    RecognitionProviderUsage,
+    ValidatedRecognitionOutput,
+)
 from drawing_graph.semantic_cache import (
     InMemorySemanticCacheService,
     SemanticCacheKeyInput,
@@ -20,6 +25,7 @@ from drawing_graph.semantic_models import (
     TableInterpretation,
     TextObservation,
 )
+from drawing_graph.semantic_models import PageSummaryResult
 from drawing_graph.semantic_service import SemanticRecognitionService
 from drawing_graph.tool_models import BBox, ElementEvidence, PageSourceFacts, SemanticTargetInput
 
@@ -580,6 +586,150 @@ class SemanticOutputProjectionTests(unittest.TestCase):
 
         self.assertEqual("block:1", facts.elements[0].source_label)
         self.assertFalse(hasattr(result.interpretations[0], "block_type"))
+
+
+class SemanticTransientOutputTests(unittest.TestCase):
+    """Page summaries and relation evidence stay transient, never graph nodes."""
+
+    def _result(self, *validated_outputs, status: str = "succeeded", attempts=()) -> RecognitionExecutionResult:
+        return RecognitionExecutionResult(
+            recognition_run_id="run:1",
+            status=status,
+            validated_outputs=validated_outputs,
+            attempts=attempts,
+        )
+
+    def test_page_summary_output_is_carried_as_transient_summary(self) -> None:
+        facts = page_facts()
+        stub = StubExecutionService(
+            results=(
+                self._result(
+                    ValidatedRecognitionOutput(
+                        task_type="page_summary",
+                        target_id="t-page",
+                        target_type="DrawingPage",
+                        status="succeeded",
+                        output={
+                            "summary": "page text",
+                            "key_elements": ["title"],
+                            "uncertainties": [],
+                        },
+                    )
+                ),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+        page_target = SemanticTargetInput(
+            target_id="t-page",
+            page_id="page:1",
+            target_type="DrawingPage",
+            task_type="page_summary",
+        )
+        result = service.recognize_targets(
+            facts,
+            (page_target,),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertIsInstance(result.summary, PageSummaryResult)
+        self.assertEqual("page text", result.summary.summary)
+        self.assertEqual(("title",), result.summary.key_elements)
+        self.assertEqual("run:1", result.summary.recognition_run_id)
+        self.assertEqual((), result.observations)
+        self.assertEqual((), result.interpretations)
+
+    def test_relation_evidence_is_candidate_only_and_never_writes(self) -> None:
+        facts = page_facts(_element("block:1"), _element("caption:1", "BlockCaption"))
+        stub = StubExecutionService(
+            results=(
+                self._result(
+                    ValidatedRecognitionOutput(
+                        task_type="relation_evidence_extraction",
+                        target_id="t1",
+                        target_type="DrawingBlock",
+                        status="succeeded",
+                        output={
+                            "candidate_evidence": [
+                                {
+                                    "relation_type": "CANDIDATE_CAPTION_OF",
+                                    "supporting_ids": ["caption:1"],
+                                }
+                            ],
+                            "supporting_ids": ["caption:1"],
+                            "uncertainties": [],
+                        },
+                    )
+                ),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+        result = service.recognize_targets(
+            facts,
+            (
+                target(
+                    target_id="t1",
+                    element_id="block:1",
+                    task_type="relation_evidence_extraction",
+                ),
+            ),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual(1, len(result.candidate_evidence))
+        evidence = result.candidate_evidence[0]
+        self.assertEqual("candidate_relation", evidence.status)
+        self.assertEqual("CANDIDATE_CAPTION_OF", evidence.relation_type)
+        self.assertEqual("t1", evidence.source_target_id)
+        self.assertEqual(("caption:1",), evidence.supporting_target_ids)
+        self.assertEqual((), result.interpretations)
+
+    def test_result_metrics_aggregate_attempts_usage_cost_latency(self) -> None:
+        attempt = RecognitionAttempt(
+            attempt_id="attempt:1",
+            recognition_run_id="run:1",
+            attempt_number=1,
+            task_type="block_semantic_identification",
+            provider="fake",
+            model_name="fake-multimodal",
+            request_fingerprint="fp-1",
+            prompt_version="prompt-v1",
+            output_contract_version="1",
+            status="succeeded",
+            latency_ms=10.0,
+            usage=RecognitionProviderUsage(input_tokens=10, output_tokens=5, status="available"),
+        )
+        stub = StubExecutionService(
+            results=(self._result(attempts=(attempt,)),),
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+        result = service.recognize_targets(
+            page_facts(_element("block:1")),
+            (target(target_id="t1", element_id="block:1"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual((attempt,), result.attempts)
+        self.assertEqual(10, result.usage_summary.input_tokens)
+        self.assertIsNotNone(result.cost_summary)
+        self.assertEqual(10.0, result.latency_summary.provider_ms)
+
+    def test_existing_result_construction_keeps_new_defaults(self) -> None:
+        from drawing_graph.semantic_service import SemanticRecognitionResult
+
+        result = SemanticRecognitionResult(
+            recognition_run_id="run:1",
+            status="succeeded",
+            observations=(),
+            persisted=False,
+        )
+        self.assertIsNone(result.summary)
+        self.assertEqual((), result.candidate_evidence)
+        self.assertEqual((), result.attempts)
+        self.assertIsNone(result.payload_ref)
+        self.assertEqual((), result.warnings)
 
 
 if __name__ == "__main__":

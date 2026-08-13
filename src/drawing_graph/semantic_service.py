@@ -7,10 +7,16 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from .recognition_execution import MultimodalRecognitionExecutionService
+from .recognition_metrics import RecognitionRateCard, RecognitionUsageMeter
 from .recognition_models import (
+    RecognitionAttempt,
+    RecognitionCandidateEvidence,
+    RecognitionCostSummary,
     RecognitionExecutionPolicy,
     RecognitionExecutionRequest,
     RecognitionExecutionResult,
+    RecognitionLatencySummary,
+    RecognitionProviderUsage,
 )
 from .recognition_tasks import RecognitionTaskRegistry, build_default_task_registry
 from .semantic_cache import SemanticCacheKeyInput, build_semantic_cache_key
@@ -18,6 +24,7 @@ from .semantic_client import FakeMultimodalRecognitionClient, MultimodalRecognit
 from .semantic_models import (
     BasicInfoInterpretation,
     BlockInterpretation,
+    PageSummaryResult,
     TableInterpretation,
     TextObservation,
 )
@@ -32,6 +39,14 @@ class SemanticRecognitionResult:
     persisted: bool
     error_summary: str | None = None
     interpretations: tuple[BlockInterpretation | BasicInfoInterpretation | TableInterpretation, ...] = ()
+    summary: PageSummaryResult | None = None
+    candidate_evidence: tuple[RecognitionCandidateEvidence, ...] = ()
+    attempts: tuple[RecognitionAttempt, ...] = ()
+    usage_summary: RecognitionProviderUsage | None = None
+    cost_summary: RecognitionCostSummary | None = None
+    latency_summary: RecognitionLatencySummary | None = None
+    payload_ref: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 class SemanticRecognitionService:
@@ -46,6 +61,8 @@ class SemanticRecognitionService:
         cache_service: object | None = None,
         execution_service: MultimodalRecognitionExecutionService | None = None,
         task_registry: RecognitionTaskRegistry | None = None,
+        usage_meter: RecognitionUsageMeter | None = None,
+        rate_card: RecognitionRateCard | None = None,
     ):
         if execution_service is None:
             provider = client or FakeMultimodalRecognitionClient()
@@ -57,6 +74,13 @@ class SemanticRecognitionService:
         self.input_builder = input_builder
         self.cache_service = cache_service
         self.task_registry = task_registry or build_default_task_registry()
+        self.usage_meter = usage_meter or RecognitionUsageMeter()
+        self.rate_card = rate_card or RecognitionRateCard(
+            provider="unknown",
+            model="unknown",
+            currency="USD",
+            version_id="unversioned",
+        )
 
     def recognize_page(
         self,
@@ -220,6 +244,12 @@ class SemanticRecognitionService:
             )
             observations = (*observations, *cached_observations)
             interpretations = (*interpretations, *cached_interpretations)
+            attempts = tuple(attempt for result in execution_results for attempt in result.attempts)
+            usage_summary = self.usage_meter.summarize_usage(attempts)
+            cost_summary, latency_summary = self.usage_meter.summarize(attempts, self.rate_card)
+            summary = _collect_page_summary(page_facts, execution_results)
+            candidate_evidence = _collect_candidate_evidence(execution_results)
+            warnings = tuple(warning for result in execution_results for warning in result.warnings)
         except Exception as exc:
             if write_back and run_summary is not None:
                 self.run_log.fail_run(run_id, _error_summary(exc))
@@ -259,6 +289,14 @@ class SemanticRecognitionService:
             persisted=write_back,
             error_summary=error_message,
             interpretations=interpretations,
+            summary=summary,
+            candidate_evidence=candidate_evidence,
+            attempts=attempts,
+            usage_summary=usage_summary,
+            cost_summary=cost_summary,
+            latency_summary=latency_summary,
+            payload_ref=None,
+            warnings=warnings,
         )
 
     def _group_pending(
@@ -510,6 +548,51 @@ def _project_execution_results(
                     )
                 )
     return tuple(observations), tuple(interpretations), None
+
+
+def _collect_page_summary(
+    page_facts: PageSourceFacts,
+    execution_results: list[RecognitionExecutionResult],
+) -> PageSummaryResult | None:
+    """Carry page_summary output as a transient summary, never a graph node."""
+
+    for result in execution_results:
+        for output in result.validated_outputs:
+            if str(output.task_type.value) != "page_summary":
+                continue
+            if str(output.status.value) in {"ambiguous", "not_found"}:
+                continue
+            return PageSummaryResult(
+                recognition_run_id=result.recognition_run_id,
+                page_id=page_facts.page_id,
+                summary=str(output.output.get("summary") or ""),
+                key_elements=tuple(output.output.get("key_elements") or ()),
+                uncertainties=tuple(output.output.get("uncertainties") or ()),
+            )
+    return None
+
+
+def _collect_candidate_evidence(
+    execution_results: list[RecognitionExecutionResult],
+) -> tuple[RecognitionCandidateEvidence, ...]:
+    """Project relation outputs only as candidate_relation evidence."""
+
+    evidence: list[RecognitionCandidateEvidence] = []
+    for result in execution_results:
+        for output in result.validated_outputs:
+            if str(output.task_type.value) != "relation_evidence_extraction":
+                continue
+            for entry in output.output.get("candidate_evidence") or ():
+                evidence.append(
+                    RecognitionCandidateEvidence(
+                        relation_type=str(entry.get("relation_type") or ""),
+                        source_target_id=output.target_id,
+                        supporting_target_ids=tuple(entry.get("supporting_ids") or ()),
+                        confidence=entry.get("confidence") if entry.get("confidence") is not None else output.confidence,
+                        status="candidate_relation",
+                    )
+                )
+    return tuple(evidence)
 
 
 def _project_text_observation(

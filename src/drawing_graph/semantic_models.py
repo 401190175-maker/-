@@ -315,6 +315,23 @@ class RecognitionRunSummary:
 
 
 @dataclass(frozen=True)
+class PageSummaryResult:
+    """Transient page-summary output; never becomes a graph node."""
+
+    recognition_run_id: str
+    page_id: str
+    summary: str
+    key_elements: tuple[str, ...] = ()
+    uncertainties: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for field_name in ("recognition_run_id", "page_id", "summary"):
+            _require_text(getattr(self, field_name), field_name)
+        object.__setattr__(self, "key_elements", _read_text_tuple(self.key_elements, "key_elements"))
+        object.__setattr__(self, "uncertainties", _read_text_tuple(self.uncertainties, "uncertainties"))
+
+
+@dataclass(frozen=True)
 class CandidateSemanticRelation:
     candidate_group_id: str
     relation_type: str
@@ -386,6 +403,7 @@ __all__ = (
     "CandidateSemanticRelation",
     "InterpretationStatus",
     "ObservationStatus",
+    "PageSummaryResult",
     "RecognitionRunStatus",
     "RecognitionRunSummary",
     "TableInterpretation",
