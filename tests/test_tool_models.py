@@ -280,5 +280,41 @@ class SemanticTargetInputTests(unittest.TestCase):
             )
 
 
+class SemanticTargetExecutionVersionsTest(unittest.TestCase):
+    """SemanticTargetInput carries execution contract versions with defaults."""
+
+    def _target(self, **overrides):
+        from drawing_graph.tool_models import SemanticTargetInput
+
+        values = {
+            "target_id": "target:1",
+            "page_id": "page:1",
+            "target_type": "DrawingBlock",
+            "task_type": "block_semantic_identification",
+            "target_element_id": "block:1",
+        }
+        values.update(overrides)
+        return SemanticTargetInput(**values)
+
+    def test_defaults_to_first_contract_and_preprocessing_versions(self):
+        target = self._target()
+        self.assertEqual("1", target.input_contract_version)
+        self.assertEqual("preprocess-v1", target.preprocessing_version)
+
+    def test_accepts_custom_contract_versions(self):
+        target = self._target(
+            input_contract_version="2",
+            preprocessing_version="preprocess-v2",
+        )
+        self.assertEqual("2", target.input_contract_version)
+        self.assertEqual("preprocess-v2", target.preprocessing_version)
+
+    def test_rejects_empty_contract_versions(self):
+        with self.assertRaises(Exception):
+            self._target(input_contract_version="")
+        with self.assertRaises(Exception):
+            self._target(preprocessing_version="")
+
+
 if __name__ == "__main__":
     unittest.main()

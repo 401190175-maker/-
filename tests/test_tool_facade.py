@@ -3,6 +3,11 @@
 import unittest
 
 from drawing_graph.query_ports import FakeDrawingGraphReadPort
+from drawing_graph.recognition_models import (
+    RecognitionExecutionPolicy,
+    RecognitionExecutionResult,
+    ValidatedRecognitionOutput,
+)
 from drawing_graph.semantic_client import FakeMultimodalRecognitionClient
 from drawing_graph.semantic_service import (
     SemanticRecognitionResult,
@@ -40,8 +45,8 @@ def precise_target() -> SemanticTargetInput:
         page_id="page:1",
         target_element_id="element:1",
         target_type="DrawingBlock",
-        task_type="text_observation",
-        required_outputs=("observation",),
+        task_type="element_text_observation",
+        required_outputs=("observations",),
         bbox=BBox(1, 2, 3, 4),
         normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
         output_contract_version="1",
@@ -64,6 +69,21 @@ class RecordingSemanticService:
         return self.result
 
 
+class StubExecutionService:
+    def __init__(self, results=None):
+        self.calls = []
+        self.results = list(results or [])
+
+    def execute(self, request, page_facts, execution_policy=None):
+        self.calls.append(request)
+        if self.results:
+            return self.results.pop(0)
+        return RecognitionExecutionResult(
+            recognition_run_id=request.recognition_run_id,
+            status="succeeded",
+        )
+
+
 class ToolFacadePreciseTargetTests(unittest.TestCase):
     def test_entry_defaults_to_write_back_false(self):
         service = RecordingSemanticService()
@@ -83,6 +103,7 @@ class ToolFacadePreciseTargetTests(unittest.TestCase):
         self.assertEqual(1, len(service.calls))
         forwarded = service.calls[0]
         self.assertFalse(forwarded["write_back"])
+        self.assertIsNone(forwarded["execution_policy"])
         self.assertEqual("qwen-vl", forwarded["model_profile"])
         self.assertEqual("1", forwarded["contract_version"])
         self.assertEqual("element:1", forwarded["targets"][0].target_element_id)
@@ -100,6 +121,35 @@ class ToolFacadePreciseTargetTests(unittest.TestCase):
         )
 
         self.assertTrue(service.calls[0]["write_back"])
+
+    def test_entry_forwards_execution_policy(self):
+        service = RecordingSemanticService()
+        facade = DrawingGraphToolFacade(
+            read_port=FakeDrawingGraphReadPort(source_facts={"page:1": page_facts()}),
+            semantic_service=service,
+        )
+
+        facade.recognize_semantic_targets(
+            (precise_target(),),
+            execution_policy=RecognitionExecutionPolicy(max_attempts=2),
+        )
+
+        forwarded = service.calls[0]["execution_policy"]
+        self.assertEqual(2, forwarded.max_attempts)
+
+    def test_entry_rejects_provider_inputs_as_unknown_keywords(self):
+        facade = DrawingGraphToolFacade(
+            read_port=FakeDrawingGraphReadPort(source_facts={"page:1": page_facts()}),
+            semantic_service=RecordingSemanticService(),
+        )
+
+        for keyword in ("image_path", "api_key", "authorization", "prompt"):
+            with self.subTest(keyword=keyword):
+                with self.assertRaises(TypeError):
+                    facade.recognize_semantic_targets(
+                        (precise_target(),),
+                        **{keyword: "not-allowed"},
+                    )
 
     def test_entry_rejects_empty_or_invalid_targets(self):
         service = RecordingSemanticService()
@@ -134,19 +184,33 @@ class ToolFacadePreciseTargetTests(unittest.TestCase):
         self.assertEqual("INVALID_ARGUMENT", error.exception.category)
 
     def test_existing_page_entry_remains_compatible(self):
-        client = FakeMultimodalRecognitionClient(
-            outputs=[
-                {
-                    "target_element_id": "element:1",
-                    "target_element_type": "DrawingBlock",
-                    "raw_text": "A1",
-                    "normalized_text": "A1",
-                    "confidence": 0.9,
-                    "status": "confirmed",
-                }
-            ]
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:1",
+                    status="succeeded",
+                    validated_outputs=(
+                        ValidatedRecognitionOutput(
+                            task_type="element_text_observation",
+                            target_id="target:element:1",
+                            target_type="DrawingBlock",
+                            status="succeeded",
+                            output={
+                                "observations": [
+                                    {
+                                        "raw_text": "A1",
+                                        "normalized_text": "A1",
+                                        "confidence": 0.9,
+                                        "status": "confirmed",
+                                    }
+                                ]
+                            },
+                        ),
+                    ),
+                ),
+            )
         )
-        service = SemanticRecognitionService(client=client)
+        service = SemanticRecognitionService(client=None, execution_service=stub)
         facade = DrawingGraphToolFacade(
             read_port=FakeDrawingGraphReadPort(source_facts={"page:1": page_facts()}),
             semantic_service=service,

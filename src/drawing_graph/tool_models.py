@@ -324,6 +324,8 @@ class SemanticTargetInput:
     target_type: str
     task_type: str
     output_contract_version: str = "1"
+    input_contract_version: str = "1"
+    preprocessing_version: str = "preprocess-v1"
     target_element_id: str | None = None
     required_outputs: tuple[str, ...] = ()
     bbox: BBox | None = None
@@ -336,6 +338,8 @@ class SemanticTargetInput:
         _require_text(self.target_type, "target_type")
         _require_text(self.task_type, "task_type")
         _require_text(self.output_contract_version, "output_contract_version")
+        _require_text(self.input_contract_version, "input_contract_version")
+        _require_text(self.preprocessing_version, "preprocessing_version")
         _require_optional_text(self.target_element_id, "target_element_id")
         object.__setattr__(
             self,

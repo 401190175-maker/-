@@ -6,6 +6,7 @@ from typing import Callable, TypeVar
 
 from .query_ports import DrawingGraphReadPort
 from .candidate_review import CandidateReviewRequest, CandidateReviewResult, CandidateReviewService
+from .recognition_models import RecognitionExecutionPolicy
 from .semantic_query_projection import SemanticQueryProjection
 from .section_match_service import SectionMatchDecision, SectionMatchService
 from .semantic_service import SemanticRecognitionResult
@@ -126,6 +127,7 @@ class DrawingGraphToolFacade:
         prompt_version: str = "default",
         contract_version: str = "1",
         write_back: bool = False,
+        execution_policy: RecognitionExecutionPolicy | None = None,
     ) -> SemanticRecognitionResult:
         """执行精确识别目标（预留入口），默认 ``write_back=false``。"""
 
@@ -161,6 +163,7 @@ class DrawingGraphToolFacade:
                 prompt_version=prompt_version,
                 contract_version=contract_version,
                 write_back=write_back,
+                execution_policy=execution_policy,
             )
         except ToolModelError:
             raise
