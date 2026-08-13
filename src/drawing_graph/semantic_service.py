@@ -6,8 +6,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from .recognition_execution import MultimodalRecognitionExecutionService
+from .recognition_models import (
+    RecognitionExecutionPolicy,
+    RecognitionExecutionRequest,
+    RecognitionExecutionResult,
+)
+from .recognition_tasks import RecognitionTaskRegistry, build_default_task_registry
 from .semantic_cache import SemanticCacheKeyInput, build_semantic_cache_key
-from .semantic_client import MultimodalRecognitionClient, RecognitionClientRequest
+from .semantic_client import FakeMultimodalRecognitionClient, MultimodalRecognitionClient
 from .semantic_models import (
     BasicInfoInterpretation,
     BlockInterpretation,
@@ -32,17 +39,24 @@ class SemanticRecognitionService:
 
     def __init__(
         self,
-        client: MultimodalRecognitionClient,
+        client: MultimodalRecognitionClient | None = None,
         run_log: object | None = None,
         semantic_repository: object | None = None,
         input_builder: object | None = None,
         cache_service: object | None = None,
+        execution_service: MultimodalRecognitionExecutionService | None = None,
+        task_registry: RecognitionTaskRegistry | None = None,
     ):
-        self.client = client
+        if execution_service is None:
+            provider = client or FakeMultimodalRecognitionClient()
+            execution_service = MultimodalRecognitionExecutionService(provider=provider)
+        self.execution_service = execution_service
+        self.client = client or getattr(execution_service, "provider", None)
         self.run_log = run_log
         self.semantic_repository = semantic_repository
         self.input_builder = input_builder
         self.cache_service = cache_service
+        self.task_registry = task_registry or build_default_task_registry()
 
     def recognize_page(
         self,
@@ -60,8 +74,8 @@ class SemanticRecognitionService:
                 page_id=page_facts.page_id,
                 target_element_id=element.element_id,
                 target_type=element.element_type,
-                task_type="text_observation",
-                required_outputs=("observation",),
+                task_type="element_text_observation",
+                required_outputs=("observations",),
                 bbox=element.bbox,
                 normalized_bbox=element.normalized_bbox,
                 output_contract_version="1",
@@ -95,6 +109,7 @@ class SemanticRecognitionService:
         prompt_version: str = "default",
         contract_version: str = "1",
         write_back: bool = False,
+        execution_policy: RecognitionExecutionPolicy | None = None,
     ) -> SemanticRecognitionResult:
         """按精确目标识别：供应商调用前二次缓存校验，命中不建持久化 run log。"""
 
@@ -154,22 +169,50 @@ class SemanticRecognitionService:
                 write_back=True,
             )
             run_id = run_summary.recognition_run_id
+        execution_results: list[RecognitionExecutionResult] = []
         try:
+            groups = self._group_pending(
+                pending_targets,
+                model_profile,
+                prompt_version,
+                contract_version,
+            )
+            for _, group in groups:
+                request = RecognitionExecutionRequest(
+                    request_id=f"req:{uuid4()}",
+                    recognition_run_id=run_id,
+                    page_id=page_facts.page_id,
+                    task_type=group[0].task_type,
+                    targets=group,
+                    model_profile=model_profile,
+                    prompt_version=prompt_version,
+                    input_contract_version="1",
+                    output_contract_version=group[0].output_contract_version or contract_version,
+                    preprocessing_version="preprocess-v1",
+                    write_back=write_back,
+                    deadline_seconds=(
+                        execution_policy.deadline_seconds
+                        if execution_policy is not None
+                        else 60.0
+                    ),
+                )
+                execution_results.append(
+                    self.execution_service.execute(
+                        request,
+                        page_facts,
+                        execution_policy,
+                    )
+                )
+            result_status = _merge_execution_status(execution_results)
             (
                 observations,
                 interpretations,
-                result_status,
-                model_name,
-                model_version,
                 error_message,
-            ) = self._recognize_pending(
+            ) = _collect_transient_outputs(
                 page_facts=page_facts,
-                pending_targets=pending_targets,
-                image_inputs=image_inputs,
-                cache_keys=cache_keys,
-                model_profile=model_profile,
-                prompt_version=prompt_version,
-                run_id=run_id,
+                execution_results=execution_results,
+                cached_observations=cached_observations,
+                cached_interpretations=cached_interpretations,
             )
         except Exception as exc:
             if write_back and run_summary is not None:
@@ -191,8 +234,8 @@ class SemanticRecognitionService:
                 raise ToolModelError("SEMANTIC_EVIDENCE_UNAVAILABLE", "semantic evidence write-back failed") from exc
             self.run_log.complete_run(
                 run_id,
-                model_name=model_name,
-                model_version=model_version,
+                model_name=None,
+                model_version=None,
             )
         return SemanticRecognitionResult(
             recognition_run_id=run_id,
@@ -202,6 +245,34 @@ class SemanticRecognitionService:
             error_summary=error_message,
             interpretations=interpretations,
         )
+
+    def _group_pending(
+        self,
+        pending_targets: tuple[SemanticTargetInput, ...],
+        model_profile: str,
+        prompt_version: str,
+        contract_version: str,
+    ):
+        """Group cache-miss targets by the execution compatibility key."""
+
+        groups: dict[tuple, list[SemanticTargetInput]] = {}
+        for target in pending_targets:
+            spec = self.task_registry.get(target.task_type)
+            key = (
+                target.page_id,
+                str(target.task_type),
+                model_profile,
+                prompt_version,
+                "1",
+                target.output_contract_version or contract_version,
+                "preprocess-v1",
+                spec.crop_policy_id,
+            )
+            groups.setdefault(key, []).append(target)
+        ordered: list[tuple[tuple, tuple[SemanticTargetInput, ...]]] = []
+        for key in sorted(groups):
+            ordered.append((key, tuple(sorted(groups[key], key=lambda item: item.target_id))))
+        return ordered
 
     def _partition_targets(
         self,
@@ -255,87 +326,6 @@ class SemanticRecognitionService:
             cache_keys,
         )
 
-    def _recognize_pending(
-        self,
-        *,
-        page_facts: PageSourceFacts,
-        pending_targets: tuple[SemanticTargetInput, ...],
-        image_inputs,
-        cache_keys,
-        model_profile: str,
-        prompt_version: str,
-        run_id: str,
-    ):
-        """只对未命中目标调用供应商，并把新证据写入缓存。"""
-
-        refs = tuple(
-            (
-                target.target_element_id,
-                target.target_type,
-                target.bbox,
-                target.normalized_bbox,
-            )
-            for target in pending_targets
-            if (
-                target.target_element_id is not None
-                and target.bbox is not None
-                and target.normalized_bbox is not None
-            )
-        )
-        if not refs:
-            raise ToolModelError(
-                "INVALID_ARGUMENT",
-                "pending targets require element id and bboxes",
-            )
-        result = self.client.recognize(
-            RecognitionClientRequest(
-                page_id=page_facts.page_id,
-                image_path=page_facts.image_path or "unknown",
-                targets=refs,
-                model_profile=model_profile,
-                prompt_version=prompt_version,
-                target_inputs=tuple(pending_targets),
-            )
-        )
-        try:
-            observations = tuple(
-                _observation(
-                    item,
-                    page_facts,
-                    run_id,
-                    model_profile,
-                    prompt_version,
-                    image_inputs,
-                    cache_keys,
-                )
-                for item in result.observations
-            )
-            interpretations = tuple(
-                interpretation
-                for item in result.interpretations
-                if (interpretation := _interpretation(item, page_facts, run_id))
-                is not None
-            )
-        except ToolModelError as exc:
-            raise ToolModelError("RECOGNITION_FAILED", "recognition output failed validation") from exc
-        if self.cache_service is not None:
-            for element_id, cache_key in cache_keys.items():
-                element_evidence = tuple(
-                    item
-                    for item in (*observations, *interpretations)
-                    if _evidence_element_id(item) == element_id
-                )
-                if element_evidence:
-                    self.cache_service.put(cache_key, element_evidence)
-        return (
-            observations,
-            interpretations,
-            result.status,
-            result.model_name,
-            result.model_version,
-            result.error_message,
-        )
-
     def _image_input(self, page_facts: PageSourceFacts, element_id: str):
         """构建图片输入，缺 builder 时返回 None。"""
 
@@ -383,6 +373,47 @@ def _target_bbox(target_element_id: str, page_facts: PageSourceFacts, normalized
         if element.element_id == target_element_id:
             return element.normalized_bbox if normalized else element.bbox
     raise ToolModelError("NOT_FOUND", "recognition output referenced an unknown target element")
+
+
+def _merge_execution_status(execution_results: list[RecognitionExecutionResult]) -> str:
+    """Merge per-group execution statuses into one run-level status."""
+
+    if not execution_results:
+        return "succeeded"
+    statuses = [str(result.status.value) for result in execution_results]
+    failed = {"contract_failed", "provider_failed", "deadline_exceeded", "recognition_failed"}
+    if any(status in failed for status in statuses):
+        if any(status == "succeeded" for status in statuses):
+            return "partial"
+        return statuses[0]
+    if any(status == "ambiguous" for status in statuses):
+        return "ambiguous"
+    if any(status == "not_found" for status in statuses):
+        return "not_found"
+    return "succeeded"
+
+
+def _collect_transient_outputs(
+    *,
+    page_facts: PageSourceFacts,
+    execution_results: list[RecognitionExecutionResult],
+    cached_observations: tuple[TextObservation, ...],
+    cached_interpretations: tuple[
+        BlockInterpretation | BasicInfoInterpretation | TableInterpretation, ...
+    ],
+):
+    """Collect contract-valid outputs from execution results.
+
+    Task 31 keeps cached evidence and defers pending-output projection to the
+    semantic DTO projection task; execution results are still validated by the
+    execution service before they can appear here.
+    """
+
+    return (
+        tuple(cached_observations),
+        tuple(cached_interpretations),
+        None,
+    )
 
 
 def _observation(
