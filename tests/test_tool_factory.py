@@ -13,6 +13,7 @@ from drawing_graph.relation_repository import (
     RelationRepositorySectionMatchQueryPort,
 )
 from drawing_graph.semantic_neo4j_repository import SemanticNeo4jRepository
+from drawing_graph.recognition_execution import MultimodalRecognitionExecutionService
 from drawing_graph.semantic_client import FakeMultimodalRecognitionClient
 from drawing_graph.source_fact_query import Neo4jPageSourceFactReader, SourceFactQuery
 from drawing_graph.tool_factory import create_neo4j_tool_facade, create_tool_facade
@@ -169,6 +170,104 @@ class ToolFactoryTest(unittest.TestCase):
                     os.environ[name] = value
 
         self.assertIsInstance(facade.semantic_service.client, QwenMultimodalRecognitionClient)
+
+    def test_factory_wires_shared_execution_service_into_semantic_service(self):
+        facade = create_tool_facade(read_port=FakeReadPort(), config=ToolFacadeConfig.from_mapping({}))
+
+        self.assertIsInstance(facade.semantic_service.execution_service, MultimodalRecognitionExecutionService)
+        self.assertIsInstance(facade.semantic_service.client, FakeMultimodalRecognitionClient)
+        self.assertIs(facade.semantic_service.execution_service.provider, facade.semantic_service.client)
+
+    def test_factory_qwen_wiring_uses_qwen_adapter_in_execution_service(self):
+        previous = os.environ.get("DASHSCOPE_API_KEY")
+        os.environ["DASHSCOPE_API_KEY"] = "test-key"
+        try:
+            facade = create_tool_facade(
+                read_port=FakeReadPort(),
+                config=ToolFacadeConfig.from_mapping({"recognition_provider": "qwen"}),
+            )
+        finally:
+            if previous is None:
+                os.environ.pop("DASHSCOPE_API_KEY", None)
+            else:
+                os.environ["DASHSCOPE_API_KEY"] = previous
+
+        self.assertIsInstance(facade.semantic_service.client, QwenMultimodalRecognitionClient)
+        self.assertIs(facade.semantic_service.execution_service.provider, facade.semantic_service.client)
+
+    def test_invalid_config_fails_before_facade_creation(self):
+        with self.assertRaises(ValueError):
+            create_tool_facade(
+                read_port=FakeReadPort(),
+                config=ToolFacadeConfig.from_mapping({"recognition_max_attempts": 0}),
+            )
+
+    def test_factory_default_policy_comes_from_config(self):
+        from drawing_graph.recognition_models import RecognitionExecutionPolicy, RecognitionExecutionResult
+        from drawing_graph.semantic_service import SemanticRecognitionService
+        from drawing_graph.tool_models import (
+            BBox,
+            ElementEvidence,
+            PageSourceFacts,
+            SemanticTargetInput,
+        )
+
+        facts = PageSourceFacts(
+            page_id="page:1",
+            image_path="road_24.png",
+            elements=(
+                ElementEvidence(
+                    element_id="block:1",
+                    element_type="DrawingBlock",
+                    source_label="block",
+                    bbox=BBox(1, 2, 3, 4),
+                    normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+                ),
+            ),
+            image_size=(10, 10),
+            image_hash="hash:provided",
+        )
+
+        captured = {}
+
+        class StubExecution:
+            def execute(self, request, page_facts, execution_policy=None):
+                captured["policy"] = execution_policy
+                return RecognitionExecutionResult(
+                    recognition_run_id=request.recognition_run_id,
+                    status="succeeded",
+                )
+
+        config = ToolFacadeConfig.from_mapping(
+            {
+                "recognition_max_attempts": 2,
+                "recognition_structure_repair_attempts": 1,
+                "recognition_deadline_seconds": 30.0,
+            }
+        )
+        service = SemanticRecognitionService(
+            client=None,
+            execution_service=StubExecution(),
+            execution_policy=RecognitionExecutionPolicy(
+                max_attempts=2,
+                structure_repair_attempts=1,
+                deadline_seconds=30.0,
+            ),
+        )
+        service.recognize_targets(
+            facts,
+            (SemanticTargetInput(
+                target_id="t1",
+                page_id="page:1",
+                target_type="DrawingBlock",
+                task_type="block_semantic_identification",
+            ),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual(2, captured["policy"].max_attempts)
+        self.assertEqual(30.0, captured["policy"].deadline_seconds)
 
 
 if __name__ == "__main__":

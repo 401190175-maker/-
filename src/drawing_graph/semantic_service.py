@@ -67,6 +67,7 @@ class SemanticRecognitionService:
         rate_card: RecognitionRateCard | None = None,
         payload_store: object | None = None,
         attempt_log: object | None = None,
+        execution_policy: RecognitionExecutionPolicy | None = None,
     ):
         if execution_service is None:
             provider = client or FakeMultimodalRecognitionClient()
@@ -87,6 +88,7 @@ class SemanticRecognitionService:
         )
         self.payload_store = payload_store
         self.attempt_log = attempt_log
+        self.default_execution_policy = execution_policy or RecognitionExecutionPolicy()
 
     def recognize_page(
         self,
@@ -205,6 +207,7 @@ class SemanticRecognitionService:
             run_id = run_summary.recognition_run_id
         execution_results: list[RecognitionExecutionResult] = []
         targets_by_id = {target.target_id: target for target in targets}
+        effective_policy = execution_policy or self.default_execution_policy
         try:
             groups = self._group_pending(
                 pending_targets,
@@ -225,17 +228,13 @@ class SemanticRecognitionService:
                     output_contract_version=group[0].output_contract_version or contract_version,
                     preprocessing_version="preprocess-v1",
                     write_back=write_back,
-                    deadline_seconds=(
-                        execution_policy.deadline_seconds
-                        if execution_policy is not None
-                        else 60.0
-                    ),
+                    deadline_seconds=effective_policy.deadline_seconds,
                 )
                 execution_results.append(
                     self.execution_service.execute(
                         request,
                         page_facts,
-                        execution_policy,
+                        effective_policy,
                     )
                 )
             result_status = _merge_execution_status(execution_results)

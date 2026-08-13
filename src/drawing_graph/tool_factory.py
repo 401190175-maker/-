@@ -11,6 +11,11 @@ from .config import ToolFacadeConfig
 from .candidate_review import CandidateReviewResult, CandidateReviewService
 from .query_port_adapter import QueryServiceReadPortAdapter
 from .query_service import QueryService
+from .recognition_attempt_log import InMemoryRecognitionAttemptLog
+from .recognition_execution import MultimodalRecognitionExecutionService
+from .recognition_image_preprocessing import RegionImagePreprocessor
+from .recognition_models import RecognitionExecutionPolicy
+from .recognition_tasks import build_default_task_registry
 from .semantic_cache import InMemorySemanticCacheService
 from .semantic_image_inputs import SemanticImageInputBuilder
 from .semantic_payload_store import InMemorySemanticPayloadStore
@@ -40,12 +45,19 @@ def create_tool_facade(read_port, config: ToolFacadeConfig | None = None) -> Dra
     payload_store = InMemorySemanticPayloadStore()
     cache_service = InMemorySemanticCacheService()
     input_builder = SemanticImageInputBuilder()
+    client = _recognition_client(facade_config)
+    execution_service, execution_policy = _build_execution_pipeline(facade_config, client)
+    attempt_log = InMemoryRecognitionAttemptLog()
     semantic_service = SemanticRecognitionService(
-        client=_recognition_client(facade_config),
+        client=client,
         run_log=run_log,
         semantic_repository=semantic_repository,
         input_builder=input_builder,
         cache_service=cache_service,
+        execution_service=execution_service,
+        payload_store=payload_store,
+        attempt_log=attempt_log,
+        execution_policy=execution_policy,
     )
     return DrawingGraphToolFacade(
         read_port=read_port,
@@ -74,12 +86,19 @@ def create_neo4j_tool_facade(
     payload_store = InMemorySemanticPayloadStore()
     cache_service = InMemorySemanticCacheService()
     input_builder = SemanticImageInputBuilder()
+    client = _recognition_client(facade_config)
+    execution_service, execution_policy = _build_execution_pipeline(facade_config, client)
+    attempt_log = InMemoryRecognitionAttemptLog()
     semantic_service = SemanticRecognitionService(
-        client=_recognition_client(facade_config),
+        client=client,
         run_log=run_log,
         semantic_repository=semantic_repository,
         input_builder=input_builder,
         cache_service=cache_service,
+        execution_service=execution_service,
+        payload_store=payload_store,
+        attempt_log=attempt_log,
+        execution_policy=execution_policy,
     )
     relation_repository = RelationRepository(driver)
     return DrawingGraphToolFacade(
@@ -144,3 +163,27 @@ def _recognition_client(config: ToolFacadeConfig):
             )
         )
     return FakeMultimodalRecognitionClient()
+
+
+def _build_execution_pipeline(config: ToolFacadeConfig, client):
+    """Assemble the 04 execution pipeline from productized config."""
+
+    execution_policy = RecognitionExecutionPolicy(
+        max_attempts=config.recognition_max_attempts,
+        structure_repair_attempts=config.recognition_structure_repair_attempts,
+        deadline_seconds=config.recognition_deadline_seconds,
+        base_backoff_ms=config.recognition_base_backoff_ms,
+        max_backoff_ms=config.recognition_max_backoff_ms,
+        jitter_ratio=config.recognition_jitter_ratio,
+    )
+    preprocessor = RegionImagePreprocessor(
+        max_image_bytes=config.recognition_max_image_bytes,
+        max_image_pixels=config.recognition_max_image_pixels,
+        max_prepared_side=config.recognition_max_prepared_side,
+    )
+    execution_service = MultimodalRecognitionExecutionService(
+        provider=client,
+        registry=build_default_task_registry(),
+        preprocessor=preprocessor,
+    )
+    return execution_service, execution_policy
