@@ -253,6 +253,7 @@ class SemanticRecognitionService:
             )
             observations = (*observations, *cached_observations)
             interpretations = (*interpretations, *cached_interpretations)
+            error_message = _first_execution_error(execution_results)
             attempts = tuple(attempt for result in execution_results for attempt in result.attempts)
             usage_summary = self.usage_meter.summarize_usage(attempts)
             cost_summary, latency_summary = self.usage_meter.summarize(attempts, self.rate_card)
@@ -411,6 +412,9 @@ class SemanticRecognitionService:
         cache_keys = {}
         for target in targets:
             element_id = target.target_element_id
+            if element_id is None:
+                pending_targets.append(target)
+                continue
             image_input = self._image_input(page_facts, element_id)
             image_inputs[element_id] = image_input
             cache_key = self._build_cache_key(
@@ -501,6 +505,20 @@ def _merge_execution_status(execution_results: list[RecognitionExecutionResult])
     if any(status == "not_found" for status in statuses):
         return "not_found"
     return statuses[0]
+
+
+def _first_execution_error(execution_results: list[RecognitionExecutionResult]) -> str | None:
+    """Return the first safe error category from a failed execution group."""
+
+    for result in execution_results:
+        if str(result.status.value) == "succeeded":
+            continue
+        if result.safe_error is not None:
+            category = result.safe_error.get("category") or result.safe_error.get("code")
+            if category:
+                return str(category)
+        return str(result.status.value)
+    return None
 
 
 def _project_execution_results(
