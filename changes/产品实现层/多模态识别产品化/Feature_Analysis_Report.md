@@ -549,5 +549,11 @@ RecognitionTarget[]
 6. 脱敏覆盖输入、prompt、HTTP、错误、payload、trace 和对外响应的所有出口。
 7. 离线合同测试是首要验收门，但不能替代 live DashScope、黄金集和 live Neo4j 的分层验证。
 
-本报告只形成产品化架构分析与推荐方案；没有实施代码，也没有改变任何来源事实、候选关系、正式关系或数据库数据。
+本报告最初只形成产品化架构分析与推荐方案；后续已按 proposal/design/tasks 实施 Task 1-43 对应的执行层与接入（见下方实施状态），未改变任何来源事实、候选关系、正式关系或数据库数据。
 
+## 实施状态（2026-08-13）
+
+- 已实现：七类 task 注册表、严格输入/输出合同、局部 bbox 内存裁剪、task-specific prompt、provider port（Fake/Qwen adapter）、有界重试与 attempt、usage/成本/延迟计量、统一脱敏、图谱外 attempt log、`MultimodalRecognitionExecutionService` 执行编排。
+- 已接入：`SemanticRecognitionService` 缓存二次校验/执行兼容分组/语义 DTO 投影/受控写回、Facade 兼容入口（`execution_policy`）、产品化配置与 Factory 装配。
+- 边界保持：默认 `write_back=false`；`RecognitionRun`/`RecognitionAttempt` 图谱外；`TextObservation` 与三类 `Interpretation` 图谱内；relation 输出只能为 `candidate_relation`，候选不等于正式事实；无 OCR；不改变 Neo4j 来源事实 schema。
+- 验证分层：全量离线单元/合同测试 1808 通过、4 跳过；live DashScope、黄金集、live Neo4j、Codex/MCP 未声称通过。

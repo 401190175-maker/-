@@ -439,3 +439,16 @@ python -m unittest tests.test_assistant_semantic_gap_docs -v
 ```
 
 未配置 live DashScope 或 live Neo4j 时，不报告 live 验证通过；skipped live 测试不等于 live 通过。
+
+## 多模态识别执行层（04）
+
+产品实现层 04 已实现供应商无关、同步优先的多模态识别执行流水线：
+
+- 七类任务：`page_summary`、`element_text_observation`、`block_semantic_identification`、`basic_info_interpretation`、`table_interpretation`、`section_label_observation`、`relation_evidence_extraction`。
+- 局部 bbox 内存裁剪、EXIF 规范化、受控缩放与资源上限；provider 只接收已渲染 prompt 与内存图。
+- 受控重试与 attempt：429/暂时性 5xx/超时有限重试、最多一次结构修复、deadline 与预算门控；每次调用生成独立 attempt。
+- 实际 usage/成本/分阶段延迟计量；缺失时 `unavailable`，不写 0。
+- 统一 fail-closed 脱敏与图谱外 attempt log。
+- `MultimodalRecognitionExecutionService` 唯一编排入口；`SemanticRecognitionService` 负责缓存、分组、投影与受控写回；Factory 默认 Fake，仅显式 qwen 配置才创建 Qwen adapter。
+- 边界：默认 `write_back=false`；run/attempt 图谱外；observation/interpretation 图谱内；relation 输出只能为 `candidate_relation`；候选不等于正式事实；无 OCR；不改变 Neo4j 来源事实 schema。
+- 验证：离线合同/单元测试全量 1808 通过、4 跳过；live DashScope、黄金集、live Neo4j、Codex/MCP 未声称通过。

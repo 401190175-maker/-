@@ -504,3 +504,17 @@ JSON 文件
 - `CrossSection` 几何归属在多个包含候选或重叠证据接近时保留 `CANDIDATE_HAS_SECTION_MARK`。
 - 候选关系 AI 复核必须保存 `review_run_id`，并使用 `accepted`、`rejected`、`unresolved` 三态输出。
 - 查询服务只返回稳定业务 ID 和定位证据，不暴露内部数据库 ID。
+
+## 04 多模态识别执行层（已实现，离线验证）
+
+产品实现层 04 已实现供应商无关、同步优先的多模态识别执行流水线：
+
+- 新增模块：`recognition_models.py`、`recognition_tasks.py`、`recognition_input_validation.py`、`recognition_image_preprocessing.py`、`recognition_prompting.py`、`recognition_output_validation.py`、`recognition_retry.py`、`recognition_metrics.py`、`recognition_redaction.py`、`recognition_attempt_log.py`、`recognition_execution.py`。
+- 七类任务：`page_summary`、`element_text_observation`、`block_semantic_identification`、`basic_info_interpretation`、`table_interpretation`、`section_label_observation`、`relation_evidence_extraction`。
+- 局部 bbox 内存裁剪（Pillow）、EXIF 规范化、受控缩放与资源上限；provider port 只接收已渲染 prompt 与内存图，不接收本地图片路径。
+- 受控重试与 attempt：429/暂时性 5xx/超时有限重试、最多一次结构修复、deadline 与预算门控；每次供应商调用生成独立 `RecognitionAttempt`。
+- 实际 usage/成本/分阶段延迟计量；缺失时状态为 `unavailable`，不把 null 写成 0。
+- 统一 fail-closed 脱敏与图谱外 append-only attempt log。
+- `MultimodalRecognitionExecutionService` 是 04 唯一执行编排入口；`SemanticRecognitionService` 负责缓存、执行兼容分组、语义 DTO 投影与受控写回；Factory 装配完整流水线，默认 Fake provider，仅显式 qwen 配置才创建 Qwen adapter。
+- 边界不变：默认 `write_back=false`；`RecognitionRun`/`RecognitionAttempt` 图谱外；`TextObservation` 与三类 `Interpretation` 图谱内；relation 输出只能为 `candidate_relation`，候选不等于正式事实；不引入 OCR；不改变 Neo4j 来源事实 schema。
+- 验证分层：离线合同/单元测试（全量 1808 通过、4 跳过）属于离线验证；live DashScope、黄金集、live Neo4j、Codex/MCP 均未声称通过。

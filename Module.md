@@ -147,3 +147,25 @@ Skill 与 MCP 分工：`drawing-graph-operator` Skill 是 facade 外侧的操作
 - 职责：指导 Codex 先读当前项目文档和受影响源码、只经 facade 或薄 CLI adapter 使用图谱能力、默认 `write_back=false`、分层输出事实、如实报告验证状态。
 - 它不属于 `src/drawing_graph/` 业务模块，不改变运行时图谱能力，也不是 Agent Skill、MCP Tool adapter、HTTP API 或文件 watcher。
 - 静态边界由 `tests/test_skill_docs.py` 保护，运行 `python -m unittest tests.test_skill_docs -v`。
+
+## 6. 04 多模态识别执行层模块
+
+产品实现层 04 已实现供应商无关、同步优先的多模态识别执行流水线，模块清单与职责如下：
+
+- `src/drawing_graph/recognition_models.py`：执行层枚举与纯 DTO（任务、状态、attempt、usage、成本、延迟、执行结果）。
+- `src/drawing_graph/recognition_tasks.py`：七类任务的不可变 Task Registry 与合同规格。
+- `src/drawing_graph/recognition_input_validation.py`：调用前目标/bbox/context/安全/策略校验。
+- `src/drawing_graph/recognition_image_preprocessing.py`：Pillow 内存局部 bbox 裁剪、EXIF 规范化、受控缩放与资源上限。
+- `src/drawing_graph/recognition_prompting.py`：task-specific prompt 渲染与稳定 fingerprint。
+- `src/drawing_graph/recognition_output_validation.py`：task schema 输出校验与事实等级拦截。
+- `src/drawing_graph/recognition_retry.py`：provider 错误分类、有界重试、deadline/预算门控。
+- `src/drawing_graph/recognition_metrics.py`：usage/实际成本/分阶段延迟汇总。
+- `src/drawing_graph/recognition_redaction.py`：统一 fail-closed 脱敏。
+- `src/drawing_graph/recognition_attempt_log.py`：图谱外 append-only attempt log。
+- `src/drawing_graph/recognition_execution.py`：`MultimodalRecognitionExecutionService` 唯一执行编排入口。
+
+依赖方向：`DrawingGraphToolFacade -> SemanticRecognitionService -> MultimodalRecognitionExecutionService -> provider port（Qwen adapter / Fake）`。执行层禁止导入 Neo4j、repository、Cypher、QA/HTTP/MCP/CLI adapter 与持久化内部实现。
+
+边界保持：默认 `write_back=false`；`RecognitionRun`/`RecognitionAttempt` 图谱外；`TextObservation` 与三类 `Interpretation` 图谱内；relation 输出只能为 `candidate_relation`，候选不等于正式事实；不引入 OCR；不改变 Neo4j 来源事实 schema。
+
+验证分层：离线合同/单元测试（全量 1808 通过、4 跳过）属于离线验证；live DashScope、黄金集、live Neo4j、Codex/MCP 均未声称通过。

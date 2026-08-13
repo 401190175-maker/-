@@ -1,6 +1,6 @@
 # 多模态识别产品化 Design
 
-**文档状态：** 技术方案，尚未实施  
+**文档状态：** 技术方案（已实施，离线验证）  
 **日期：** 2026-08-12  
 **适用范围：** 产品实现层 04 多模态识别执行模块  
 **设计依据：** proposal.md、Feature_Analysis_Report.md、changes/产品实现层/04-multimodal-recognition.md、当前 architecture.md、Module.md 及现有语义识别源码与测试  
@@ -930,3 +930,12 @@ Retry-After 只接受可解析且不超过配置上限的值。指数退避带�
 7. 所有新增与修改模块都直接服务本需求，没有无意义重构。
 
 本文件经用户评审确认后，下一步才将方案拆分为单一目标、指定文件、可独立测试且有完成标准的 tasks.md；本设计本身不授权代码实施。
+
+## 11. 实施状态（2026-08-13）
+
+本设计已按 tasks.md 实施 Task 1-43（除文档同步与专项验收外全部完成），实施状态如下：
+
+- 已实现模块：`recognition_models.py`、`recognition_tasks.py`、`recognition_input_validation.py`、`recognition_image_preprocessing.py`、`recognition_prompting.py`、`recognition_output_validation.py`、`recognition_retry.py`、`recognition_metrics.py`、`recognition_redaction.py`、`recognition_attempt_log.py`、`recognition_execution.py`。
+- 已接入：`SemanticRecognitionService`（缓存二次校验、执行兼容分组、语义 DTO 投影、受控写回）、`DrawingGraphToolFacade.recognize_semantic_targets(..., execution_policy=None)`、`ToolFacadeConfig` 产品化字段、Factory 完整流水线装配。
+- 七类 task 注册表、局部 bbox 内存裁剪、task-specific prompt、严格输出校验、有界重试/attempt、usage/成本/延迟计量、统一脱敏、图谱外 attempt log 均已落地并有独立离线测试。
+- 验证边界：全量离线单元/合同测试 1808 通过、4 跳过；live DashScope、黄金集、live Neo4j、Codex/MCP 未声称通过。

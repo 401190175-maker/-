@@ -197,3 +197,17 @@ output_contract_version
 - API key 不进入领域 DTO、命令参数、日志或输出。
 - 模型输出只能成为语义 observation、interpretation 或 candidate evidence。
 - 离线、live DashScope 和 live Neo4j 验证状态分开报告。
+
+## 12. 实施状态与落地（2026-08-13）
+
+本阶段文档对应的 04 执行层已实现并通过离线合同测试，落地内容包括：
+
+- 新增执行模块：`recognition_models.py`、`recognition_tasks.py`、`recognition_input_validation.py`、`recognition_image_preprocessing.py`、`recognition_prompting.py`、`recognition_output_validation.py`、`recognition_retry.py`、`recognition_metrics.py`、`recognition_redaction.py`、`recognition_attempt_log.py`、`recognition_execution.py`。
+- 七类 task 均注册到不可变 `RecognitionTaskRegistry`，每个任务绑定目标白名单、prompt/输入/输出合同版本、crop policy、必需输出与写回声明。
+- 请求合同由 `RecognitionExecutionRequest` 表达：run/page/targets、model、prompt、输入/输出合同、preprocessing、deadline、`write_back`；provider port 只接收已渲染 prompt 与内存图。
+- 输出合同由 `RecognitionOutputValidator` 强制：JSON object、字段白名单、类型/枚举/置信度、目标归属、事实等级；`ambiguous`/`not_found`/`contract_failed` 不产生可写语义证据。
+- 重试与 attempt：429/暂时性 5xx/超时有限重试，认证/权限/永久错误不重试，非法 JSON/schema 最多一次结构修复；每次供应商调用生成独立 attempt，deadline 与预算门控在每次调用前执行。
+- 计量与脱敏：实际 usage/成本/分阶段延迟汇总（缺失为 `unavailable`，不写 0）；统一 fail-closed 脱敏覆盖 error/payload/trace。
+- 编排与接入：`MultimodalRecognitionExecutionService.execute()` 为唯一执行入口；`SemanticRecognitionService` 负责缓存二次校验、执行兼容分组、语义 DTO 投影与受控写回；Factory 装配完整流水线，默认 Fake provider。
+- 写回边界：默认 `write_back=false`；`write_back=true` 仅保存脱敏 run/attempt/payload 与允许矩阵中的语义证据；page summary 与 relation evidence 只保留图谱外审计，不建节点/边。
+- 验证分层：全量离线单元/合同测试 1808 通过、4 跳过；live DashScope、黄金集、live Neo4j、Codex/MCP 未声称通过。
