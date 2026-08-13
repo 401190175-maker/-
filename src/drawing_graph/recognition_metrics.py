@@ -84,16 +84,18 @@ class RecognitionUsageMeter:
         *,
         validation_ms: float = 0.0,
         preprocessing_ms: float = 0.0,
-        backoff_ms: float = 0.0,
+        backoff_segments: tuple[float, ...] = (),
         output_validation_ms: float = 0.0,
     ) -> tuple[RecognitionCostSummary, RecognitionLatencySummary]:
         """Return actual-cost and staged-latency summaries."""
 
         _require_attempts(attempts)
         _require_rate_card(rate_card)
+        _require_backoff_segments(backoff_segments)
         usage = self.summarize_usage(attempts)
         cost = self._cost(usage, rate_card)
         provider_ms = sum(attempt.latency_ms for attempt in attempts)
+        backoff_ms = sum(backoff_segments)
         total_ms = (
             validation_ms
             + preprocessing_ms
@@ -159,6 +161,14 @@ def _require_attempts(value: Any) -> None:
 def _require_rate_card(value: Any) -> None:
     if not isinstance(value, RecognitionRateCard):
         raise ValueError("rate_card must be a RecognitionRateCard")
+
+
+def _require_backoff_segments(value: Any) -> None:
+    if not isinstance(value, tuple) or not all(
+        isinstance(item, (int, float)) and not isinstance(item, bool) and item >= 0
+        for item in value
+    ):
+        raise ValueError("backoff_segments must be a tuple of non-negative numbers")
 
 
 __all__ = ("RecognitionRateCard", "RecognitionUsageMeter")

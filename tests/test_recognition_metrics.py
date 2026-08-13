@@ -162,5 +162,69 @@ class RecognitionUsageCostTests(unittest.TestCase):
             )
 
 
+class RecognitionLatencyTests(unittest.TestCase):
+    """Latency segments must be individually traceable and sum to total."""
+
+    def _card(self) -> RecognitionRateCard:
+        return RecognitionRateCard(provider="qwen", model="m", currency="USD", version_id="rate-v1")
+
+    def test_total_equals_sum_of_stages_with_fixed_clock(self) -> None:
+        attempts = (
+            _attempt(attempt_number=1, latency_ms=10.0),
+            _attempt(attempt_number=2, latency_ms=20.0),
+        )
+        _, latency = RecognitionUsageMeter().summarize(
+            attempts,
+            self._card(),
+            validation_ms=2.0,
+            preprocessing_ms=3.0,
+            backoff_segments=(1.5, 2.5),
+            output_validation_ms=1.0,
+        )
+        self.assertEqual(30.0, latency.provider_ms)
+        self.assertEqual(4.0, latency.backoff_ms)
+        self.assertEqual(2.0, latency.validation_ms)
+        self.assertEqual(3.0, latency.preprocessing_ms)
+        self.assertEqual(1.0, latency.output_validation_ms)
+        self.assertEqual(40.0, latency.total_ms)
+
+    def test_per_attempt_provider_latency_is_individually_traceable(self) -> None:
+        attempts = (
+            _attempt(attempt_number=1, latency_ms=10.0),
+            _attempt(attempt_number=2, status="retryable_failed", latency_ms=15.0),
+            _attempt(attempt_number=3, latency_ms=25.0),
+        )
+        _, latency = RecognitionUsageMeter().summarize(attempts, self._card())
+        self.assertEqual([10.0, 15.0, 25.0], [attempt.latency_ms for attempt in attempts])
+        self.assertEqual(50.0, latency.provider_ms)
+
+    def test_cache_hit_has_no_provider_or_backoff_latency(self) -> None:
+        _, latency = RecognitionUsageMeter().summarize(
+            (),
+            self._card(),
+            validation_ms=1.0,
+            preprocessing_ms=2.0,
+            backoff_segments=(),
+            output_validation_ms=0.5,
+        )
+        self.assertEqual(0.0, latency.provider_ms)
+        self.assertEqual(0.0, latency.backoff_ms)
+        self.assertEqual(3.5, latency.total_ms)
+
+    def test_latency_summary_contains_no_prompt_images_or_payload(self) -> None:
+        _, latency = RecognitionUsageMeter().summarize((), self._card())
+        self.assertFalse(hasattr(latency, "prompt"))
+        self.assertFalse(hasattr(latency, "images"))
+        self.assertFalse(hasattr(latency, "payload"))
+
+    def test_negative_backoff_segments_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            RecognitionUsageMeter().summarize(
+                (),
+                self._card(),
+                backoff_segments=(-1.0,),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
