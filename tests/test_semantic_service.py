@@ -441,6 +441,125 @@ class SemanticOutputProjectionTests(unittest.TestCase):
         self.assertEqual("1", interpretation.input_contract_version)
         self.assertEqual("preprocess-v1", interpretation.preprocessing_version)
 
+    def test_block_projection_normalizes_structured_list_items_to_text(self) -> None:
+        facts = page_facts(_element("block:1"))
+        stub = StubExecutionService(
+            results=(
+                self._result(
+                    ValidatedRecognitionOutput(
+                        task_type="block_semantic_identification",
+                        target_id="t1",
+                        target_type="DrawingBlock",
+                        status="succeeded",
+                        output={
+                            "interpretation": {
+                                "summary": "beam",
+                                "components": [
+                                    {"name": "wall", "count": 2},
+                                    "",
+                                    "cap beam",
+                                ],
+                            }
+                        },
+                    )
+                ),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+
+        result = service.recognize_targets(
+            facts,
+            (target(target_id="t1", element_id="block:1"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual(('{"count":2,"name":"wall"}', "cap beam"), result.interpretations[0].components)
+
+    def test_block_projection_normalizes_provider_analysis_status(self) -> None:
+        facts = page_facts(_element("block:1"))
+        stub = StubExecutionService(
+            results=(
+                self._result(
+                    ValidatedRecognitionOutput(
+                        task_type="block_semantic_identification",
+                        target_id="t1",
+                        target_type="DrawingBlock",
+                        status="succeeded",
+                        output={
+                            "interpretation": {
+                                "summary": "beam",
+                                "analysis_status": "complete",
+                            }
+                        },
+                    )
+                ),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+
+        result = service.recognize_targets(
+            facts,
+            (target(target_id="t1", element_id="block:1"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual("interpreted", result.interpretations[0].analysis_status.value)
+
+    def test_block_observations_link_to_interpretation_support_chain(self) -> None:
+        facts = page_facts(_element("block:1"))
+        stub = StubExecutionService(
+            results=(
+                self._result(
+                    ValidatedRecognitionOutput(
+                        task_type="block_semantic_identification",
+                        target_id="t1",
+                        target_type="DrawingBlock",
+                        status="succeeded",
+                        output={
+                            "interpretation": {
+                                "summary": "beam",
+                                "interpreted_type": "structural",
+                            },
+                            "observations": [
+                                {
+                                    "raw_text": "W250x89",
+                                    "normalized_text": "W250x89",
+                                    "status": "succeeded",
+                                    "confidence": 0.9,
+                                },
+                                {
+                                    "raw_text": "A-A",
+                                    "normalized_text": "A-A",
+                                    "status": "succeeded",
+                                    "confidence": 0.8,
+                                },
+                            ],
+                        },
+                    )
+                ),
+            )
+        )
+        service = SemanticRecognitionService(client=None, cache_service=None, execution_service=stub)
+
+        result = service.recognize_targets(
+            facts,
+            (target(target_id="t1", element_id="block:1"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual(2, len(result.observations))
+        self.assertEqual(
+            ("obs:run:1:block:1:0", "obs:run:1:block:1:1"),
+            tuple(observation.observation_id for observation in result.observations),
+        )
+        self.assertEqual(
+            ("obs:run:1:block:1:0", "obs:run:1:block:1:1"),
+            result.interpretations[0].supported_by_observation_ids,
+        )
+
     def test_element_text_output_projects_to_text_observation(self) -> None:
         facts = page_facts(_element("caption:1", "BlockCaption"))
         stub = StubExecutionService(
@@ -858,6 +977,88 @@ class SemanticPartialResultTests(unittest.TestCase):
 
         self.assertEqual("partial", result.status)
         self.assertEqual(1, len(result.interpretations))
+
+
+class SemanticServiceCacheOutcomeTests(unittest.TestCase):
+    def _service(self, *, stub, cache, input_builder=None):
+        return SemanticRecognitionService(
+            client=None,
+            run_log=SpyRunLog(),
+            cache_service=cache,
+            execution_service=stub,
+            input_builder=input_builder or RecordingInputBuilder(),
+        )
+
+    def test_cache_hit_reports_hit_with_reused_evidence_ids(self):
+        cache = InMemorySemanticCacheService()
+        cache_key = build_semantic_cache_key(
+            SemanticCacheKeyInput(
+                image_hash="hash:provided",
+                bbox=(1, 2, 3, 4),
+                target_element_id="block:1",
+                task_type="element_text_observation",
+                model_profile="default",
+                model_version="unknown",
+                prompt_version="p1",
+                preprocessing_version="preprocess-v1",
+                normalization_rule_version="normalize-v1",
+                contract_version="1",
+            )
+        )
+        cache.put(cache_key, (cached_observation(),))
+        stub = StubExecutionService()
+        service = self._service(stub=stub, cache=cache)
+
+        result = service.recognize_page(
+            page_facts(_element("block:1")),
+            ("DrawingBlock",),
+            "default",
+            "p1",
+        )
+
+        self.assertEqual(1, len(result.cache_outcomes))
+        outcome = result.cache_outcomes[0]
+        self.assertEqual("hit", outcome.disposition)
+        self.assertEqual(("obs:cached:block:1",), outcome.reused_evidence_ids)
+        self.assertFalse(outcome.provider_called)
+        self.assertEqual([], stub.calls)
+
+    def test_cache_miss_reports_miss_and_provider_called(self):
+        cache = InMemorySemanticCacheService()
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:temp:1",
+                    status="succeeded",
+                    validated_outputs=(),
+                ),
+            )
+        )
+        service = self._service(stub=stub, cache=cache)
+
+        result = service.recognize_targets(
+            page_facts(_element("block:1")),
+            (target(target_id="t1", element_id="block:1", task_type="element_text_observation"),),
+            "default",
+            "prompt-v1",
+        )
+
+        self.assertEqual(1, len(result.cache_outcomes))
+        outcome = result.cache_outcomes[0]
+        self.assertEqual("miss", outcome.disposition)
+        self.assertTrue(outcome.provider_called)
+        self.assertEqual((), outcome.reused_evidence_ids)
+
+    def test_result_without_cache_outcomes_is_backward_compatible(self):
+        from drawing_graph.semantic_service import SemanticRecognitionResult
+
+        result = SemanticRecognitionResult(
+            recognition_run_id="run:1",
+            status="succeeded",
+            observations=(),
+            persisted=False,
+        )
+        self.assertEqual((), result.cache_outcomes)
 
 
 if __name__ == "__main__":

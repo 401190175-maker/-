@@ -107,5 +107,84 @@ class ModuleMcpDocsTest(unittest.TestCase):
                 self.assertIn(phrase, self.module_doc)
 
 
+class ModuleAnswerGenerationDocsTest(unittest.TestCase):
+    """Module.md must record the 06/07 answer-generation and orchestration modules."""
+
+    def setUp(self):
+        self.module_doc = (ROOT / "Module.md").read_text(encoding="utf-8")
+
+    def test_records_answer_generation_and_orchestration_modules(self):
+        for path in (
+            "src/drawing_graph/assistant_claim_builder.py",
+            "src/drawing_graph/assistant_citation_builder.py",
+            "src/drawing_graph/assistant_answer_generation.py",
+            "src/drawing_graph/assistant_answer_templates.py",
+            "src/drawing_graph/assistant_answer_text.py",
+            "src/drawing_graph/drawing_assistant_service.py",
+            "src/drawing_graph/drawing_assistant_factory.py",
+            "scripts/drawing_assistant.py",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, self.module_doc)
+
+    def test_records_answer_generation_boundaries(self):
+        for phrase in (
+            "AnswerGenerationService.generate",
+            "DrawingAssistantService.answer",
+            "machine_answer",
+            "candidate/interpretation 不被提升为 formal/source fact",
+            "产品 CLI 是现有 QA CLI/HTTP/MCP 的同级 adapter",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.module_doc)
+
+
+class ModuleProductAdapterDocsTest(unittest.TestCase):
+    """Module.md must record the product HTTP/MCP adapter modules and interfaces."""
+
+    def setUp(self):
+        self.module_doc = (ROOT / "Module.md").read_text(encoding="utf-8")
+
+    def test_records_product_adapter_modules(self):
+        for path in (
+            "assistant_adapter_serialization.py",
+            "assistant_http.py",
+            "assistant_http_models.py",
+            "assistant_http_runtime.py",
+            "assistant_mcp_models.py",
+            "assistant_mcp_tools.py",
+            "assistant_mcp_runtime.py",
+            "assistant_mcp_server.py",
+            "serve_drawing_assistant.py",
+            "serve_drawing_assistant_mcp.py",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, self.module_doc)
+
+    def test_records_product_adapter_config_and_interfaces(self):
+        for phrase in (
+            "AssistantHttpConfig",
+            "AssistantMcpConfig",
+            "answer_package_to_data",
+            "create_assistant_http_runtime",
+            "create_assistant_mcp_runtime",
+            "ask_drawing_assistant",
+            "DRAWING_GRAPH_ASSISTANT_HTTP_",
+            "DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.module_doc)
+
+    def test_records_product_adapter_boundaries(self):
+        for phrase in (
+            "DrawingAssistantService.answer()",
+            "write_back=false",
+            "候选关系不是正式事实",
+            "外部产品级 Web UI 与反馈入口",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.module_doc)
+
+
 if __name__ == "__main__":
     unittest.main()

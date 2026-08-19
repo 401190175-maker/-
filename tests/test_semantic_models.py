@@ -293,5 +293,66 @@ class SemanticProjectionProvenanceTests(unittest.TestCase):
                 self.assertEqual("preprocess-v1", interpretation.preprocessing_version)
 
 
+class SemanticLineageModelTests(unittest.TestCase):
+    def test_observation_status_has_stale(self):
+        self.assertEqual("stale", ObservationStatus.STALE.value)
+
+    def test_text_observation_accepts_lineage_fields(self):
+        observation = TextObservation(
+            observation_id="obs:1",
+            recognition_run_id="run:1",
+            target_element_id="block:1",
+            target_element_type="DrawingBlock",
+            page_id="page:1",
+            raw_text="A1",
+            normalized_text="A1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            confidence=0.9,
+            status="confirmed",
+            evidence_family_key="family:1",
+            normalization_rule_version="norm-v1",
+            superseded_by_evidence_id="obs:2",
+            stale_reason="superseded",
+            stale_at="2026-08-13T00:00:00Z",
+        )
+        self.assertEqual("family:1", observation.evidence_family_key)
+        self.assertEqual("norm-v1", observation.normalization_rule_version)
+        self.assertEqual("obs:2", observation.superseded_by_evidence_id)
+
+    def test_observation_without_lineage_fields_still_constructs(self):
+        observation = TextObservation(
+            observation_id="obs:1",
+            recognition_run_id="run:1",
+            target_element_id="block:1",
+            target_element_type="DrawingBlock",
+            page_id="page:1",
+            raw_text="A1",
+            normalized_text="A1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            confidence=0.9,
+            status="confirmed",
+        )
+        self.assertIsNone(observation.evidence_family_key)
+        self.assertIsNone(observation.superseded_by_evidence_id)
+
+    def test_interpretations_accept_lineage_fields(self):
+        interpretation = BlockInterpretation(
+            interpretation_id="interpretation:1",
+            recognition_run_id="run:1",
+            block_id="block:1",
+            summary="wall",
+            evidence_family_key="family:1",
+            supersedes_evidence_ids=("interp:0",),
+            superseded_by_evidence_id="interp:2",
+            stale_reason="superseded",
+            stale_at="2026-08-13T00:00:00Z",
+        )
+        self.assertEqual("family:1", interpretation.evidence_family_key)
+        self.assertEqual(("interp:0",), interpretation.supersedes_evidence_ids)
+        self.assertEqual("interp:2", interpretation.superseded_by_evidence_id)
+
+
 if __name__ == "__main__":
     unittest.main()

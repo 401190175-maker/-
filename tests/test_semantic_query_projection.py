@@ -168,5 +168,55 @@ class SemanticQueryProjectionTest(unittest.TestCase):
             SemanticQueryProjection().project_page(page_id="")
 
 
+class SemanticLineageProjectionTests(unittest.TestCase):
+    def _stale_observation(self):
+        return TextObservation(
+            observation_id="obs:1",
+            recognition_run_id="run:1",
+            target_element_id="block:1",
+            target_element_type="DrawingBlock",
+            page_id="page:1",
+            raw_text="A1",
+            normalized_text="A1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            confidence=0.9,
+            status="stale",
+            evidence_family_key="family:1",
+            superseded_by_evidence_id="obs:2",
+            stale_reason="newer",
+            stale_at="2026-08-13T00:00:00Z",
+        )
+
+    def test_observation_projection_carries_lineage_fields(self):
+        summary = SemanticQueryProjection().project_observations((self._stale_observation(),))[0]
+        self.assertEqual("family:1", summary.evidence["evidence_family_key"])
+        self.assertEqual("obs:2", summary.evidence["superseded_by_evidence_id"])
+        self.assertEqual("newer", summary.evidence["stale_reason"])
+        self.assertEqual("2026-08-13T00:00:00Z", summary.evidence["stale_at"])
+
+    def test_observation_without_lineage_is_compatible(self):
+        summary = SemanticQueryProjection().project_observations((observation(),))[0]
+        self.assertIsNone(summary.evidence["evidence_family_key"])
+        self.assertIsNone(summary.evidence["superseded_by_evidence_id"])
+
+    def test_interpretation_projection_carries_lineage_fields(self):
+        interp = BlockInterpretation(
+            interpretation_id="interpretation:1",
+            recognition_run_id="run:1",
+            block_id="block:1",
+            page_id="page:1",
+            summary="wall",
+            analysis_status="stale",
+            evidence_family_key="family:1",
+            supersedes_evidence_ids=("interp:0",),
+            superseded_by_evidence_id="interp:2",
+        )
+        summary = SemanticQueryProjection().project_interpretations((interp,))[0]
+        self.assertEqual("family:1", summary.evidence["evidence_family_key"])
+        self.assertEqual(("interp:0",), summary.evidence["supersedes_evidence_ids"])
+        self.assertEqual("interp:2", summary.evidence["superseded_by_evidence_id"])
+
+
 if __name__ == "__main__":
     unittest.main()

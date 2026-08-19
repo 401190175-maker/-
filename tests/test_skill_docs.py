@@ -34,6 +34,7 @@ class SkillDocsTest(unittest.TestCase):
         "references/facade-workflows.md",
         "references/verification.md",
         "references/output-contract.md",
+        "references/product-test-workflows.md",
     )
 
     def setUp(self):
@@ -228,6 +229,17 @@ class DrawingGraphSkillMcpBoundaryTests(unittest.TestCase):
                 self.assertIn(tool_name, self.text)
         self.assertIn("write_back=false", self.text)
 
+    def test_product_mcp_tool_and_cli_fallback_are_documented(self):
+        for phrase in (
+            "drawing-assistant",
+            "ask_drawing_assistant",
+            "DrawingAssistantService.answer()",
+            "scripts/drawing_assistant.py",
+            "product-test-workflows.md",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
     def test_reference_has_no_code_or_secret_values(self):
         import re
 
@@ -315,6 +327,7 @@ class DrawingGraphSkillMcpVerificationTests(unittest.TestCase):
             "HTTP 回归",
             "live Neo4j",
             "模型/工具单元测试",
+            "产品三入口 fake 验收",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.text)
@@ -364,7 +377,75 @@ class DrawingGraphSkillEntryTests(unittest.TestCase):
                 self.assertIn(phrase, self.text)
 
     def test_reference_table_includes_new_routing_files(self):
-        for phrase in ("qa-workflows.md", "mcp-boundaries.md", "渐进披露"):
+        for phrase in ("qa-workflows.md", "product-test-workflows.md", "mcp-boundaries.md", "渐进披露"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_product_assistant_testing_routes_to_product_reference(self):
+        for phrase in (
+            "ask_drawing_assistant",
+            "DrawingAssistantService.answer()",
+            "产品级自然语言问答测试",
+            "受控 CLI",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+
+class DrawingGraphSkillProductTestWorkflowTests(unittest.TestCase):
+    """product-test-workflows.md must route product assistant tests safely."""
+
+    REFERENCE = "references/product-test-workflows.md"
+
+    def setUp(self):
+        self.path = SKILL_DIR / self.REFERENCE
+        self.text = self.path.read_text(encoding="utf-8")
+
+    def test_reference_exists(self):
+        self.assertTrue(self.path.is_file(), f"missing skill file: {self.path}")
+
+    def test_product_chain_routes_through_assistant_service_and_facade(self):
+        for phrase in (
+            "ask_drawing_assistant",
+            "scripts/drawing_assistant.py",
+            "DrawingAssistantService.answer()",
+            "DrawingGraphToolFacade.recognize_semantic_targets(write_back=false)",
+            "EvidenceFusionService(write_back_policy=None)",
+            "AnswerPackage",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_product_inputs_reject_writeback_and_low_level_fields(self):
+        for phrase in (
+            "不接受 `write_back`",
+            "allow_write_back",
+            "Cypher",
+            "Neo4j 凭据",
+            "repository",
+            "allow_recognition=true",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_product_fallback_and_entry_results_remain_layered(self):
+        for phrase in (
+            "透明降级",
+            "不得写成 MCP 已验证",
+            "HTTP adapter 测试失败",
+            "各入口验证结果必须分层报告",
+            "skipped 集成测试",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.text)
+
+    def test_recommended_tests_cover_product_entrypoints(self):
+        for phrase in (
+            "tests.test_drawing_assistant_cli",
+            "tests.test_assistant_mcp_tools",
+            "tests.test_product_adapter_e2e",
+            "tests.test_assistant_adapter_docs",
+        ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.text)
 
@@ -394,10 +475,52 @@ class DrawingGraphSkillSingleAuthorityTests(unittest.TestCase):
             "references/output-contract.md",
             "references/qa-workflows.md",
             "references/mcp-boundaries.md",
+            "references/product-test-workflows.md",
+            "references/blocked-path.md",
         )
         for name in required:
             with self.subTest(name=name):
                 self.assertTrue((SKILL_DIR / name).is_file(), f"missing in {SKILL_DIR}: {name}")
+
+
+class DrawingGraphSkillPreflightGateTests(unittest.TestCase):
+    """SKILL.md 必须强制前置门并在入口不可用时失败封闭（BLOCKED）。"""
+
+    FILE = "SKILL.md"
+    BLOCKED_REF = "references/blocked-path.md"
+    SCRIPT = PROJECT_ROOT / "scripts" / "skill_preflight.py"
+
+    def setUp(self):
+        self.skill_path = SKILL_DIR / self.FILE
+        self.skill_text = self.skill_path.read_text(encoding="utf-8")
+        self.blocked_path = SKILL_DIR / self.BLOCKED_REF
+        self.blocked_text = self.blocked_path.read_text(encoding="utf-8")
+
+    def test_preflight_gate_section_is_documented(self):
+        for phrase in ("前置门与失败封闭", "skill_preflight.py", "前置门报告", "BLOCKED 报告"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.skill_text)
+
+    def test_forbidden_fallback_list_is_documented(self):
+        for phrase in ("禁止兜底清单", "OCR", "未获用户明确授权", "直接读取 PNG"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.skill_text)
+
+    def test_blocked_path_reference_exists_and_has_decision_table(self):
+        self.assertTrue(self.blocked_path.is_file(), f"missing skill file: {self.blocked_path}")
+        for phrase in ("决策表", "BLOCKED", "等待用户指示", "不打印"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.blocked_text)
+
+    def test_preflight_script_exists_and_declares_read_only(self):
+        self.assertTrue(self.SCRIPT.is_file(), f"missing script: {self.SCRIPT}")
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("只读", text)
+        self.assertIn("不输出任何密钥", text)
+
+    def test_blocked_path_reference_has_no_secrets_or_absolute_paths(self):
+        self.assertNotIn("sk-", self.blocked_text)
+        self.assertNotIn("C:\\Users", self.blocked_text)
 
 
 class DrawingGraphSkillMcpDependencyTests(unittest.TestCase):

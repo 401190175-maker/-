@@ -180,5 +180,61 @@ class SemanticNeo4jObservationsTest(unittest.TestCase):
         self.assertEqual("confirmed", observations[0].status.value)
 
 
+class SemanticObservationLineageWriteTests(unittest.TestCase):
+    def test_marks_observation_stale_with_parameterized_cypher(self):
+        driver = FakeDriver()
+        repository = SemanticNeo4jRepository(driver)
+
+        repository.mark_evidence_stale(
+            ("obs:1",),
+            superseded_by_evidence_id="obs:2",
+            stale_reason="newer-evidence",
+            stale_at="2026-08-13T00:00:00Z",
+            evidence_family_key="family:1",
+        )
+
+        cypher, parameters = driver.sessions[0].transaction.calls[0]
+        self.assertIn("any(label IN labels(n) WHERE label IN $allowed_labels)", cypher)
+        self.assertIn("TextObservation", parameters["allowed_labels"])
+        self.assertNotIn("obs:1", cypher)
+        self.assertNotIn("family:1", cypher)
+        self.assertNotIn("newer-evidence", cypher)
+        self.assertEqual(["obs:1"], parameters["evidence_ids"])
+        self.assertEqual("obs:2", parameters["superseded_by_evidence_id"])
+        self.assertEqual("family:1", parameters["evidence_family_key"])
+
+    def test_rejects_invalid_inputs(self):
+        driver = FakeDriver()
+        repository = SemanticNeo4jRepository(driver)
+        with self.assertRaises(ToolModelError):
+            repository.mark_evidence_stale(
+                "obs:1",
+                superseded_by_evidence_id="obs:2",
+                stale_reason="r",
+                stale_at="t",
+                evidence_family_key="family:1",
+            )
+        with self.assertRaises(ToolModelError):
+            repository.mark_evidence_stale(
+                ("obs:1",),
+                superseded_by_evidence_id="obs:2",
+                stale_reason="",
+                stale_at="t",
+                evidence_family_key="family:1",
+            )
+
+    def test_empty_ids_do_not_open_session(self):
+        driver = FakeDriver()
+        repository = SemanticNeo4jRepository(driver)
+        repository.mark_evidence_stale(
+            (),
+            superseded_by_evidence_id="obs:2",
+            stale_reason="r",
+            stale_at="t",
+            evidence_family_key="family:1",
+        )
+        self.assertEqual([], driver.sessions)
+
+
 if __name__ == "__main__":
     unittest.main()

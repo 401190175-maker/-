@@ -12,7 +12,6 @@ from drawing_graph.semantic_repository import InMemorySemanticEvidenceRepository
 from drawing_graph.semantic_service import SemanticRecognitionService
 from drawing_graph.tool_models import BBox, ElementEvidence, PageSourceFacts, SemanticTargetInput, ToolModelError
 
-
 def _element(element_id: str = "block:1", element_type: str = "DrawingBlock") -> ElementEvidence:
     return ElementEvidence(
         element_id=element_id,
@@ -371,3 +370,88 @@ class SemanticServiceWriteBackTest(unittest.TestCase):
         self.assertIsNone(result.payload_ref)
         self.assertEqual("PAYLOAD_STORE_UNAVAILABLE", result.error_summary)
         self.assertEqual("failed", run_log.get_run(result.recognition_run_id).status)
+
+
+class ValidatedBatchPersistenceTests(unittest.TestCase):
+    def _service(self, repository, payload_store, attempt_log):
+        return SemanticRecognitionService(
+            client=None,
+            run_log=InMemoryRecognitionRunLog(),
+            semantic_repository=repository,
+            cache_service=None,
+            attempt_log=attempt_log,
+            payload_store=payload_store,
+        )
+
+    def _batch(self, observations=(), interpretations=(), candidate_evidence=()):
+        from drawing_graph.assistant_evidence_fusion_models import SemanticWriteBatch
+        return SemanticWriteBatch(
+            recognition_run_id='run:1',
+            schema_valid=True,
+            scope_valid=True,
+            payload_sanitized=True,
+            audit_material_complete=True,
+            attempts=(),
+            sanitized_payload_envelope={'run_id': 'run:1', 'status': 'succeeded'},
+            observations=observations,
+            interpretations=interpretations,
+            candidate_evidence=candidate_evidence,
+            cache_entries=(),
+        )
+
+    def test_persist_validated_batch_writes_without_provider_call(self):
+        from drawing_graph.semantic_models import BlockInterpretation
+        repository = InMemorySemanticEvidenceRepository()
+        payload_store = InMemorySemanticPayloadStore()
+        attempt_log = InMemoryRecognitionAttemptLog()
+        service = self._service(repository, payload_store, attempt_log)
+        interpretation = BlockInterpretation(
+            interpretation_id="interp:1",
+            recognition_run_id="run:1",
+            block_id="block:1",
+            page_id="page:1",
+            summary="wall block",
+        )
+
+        payload_ref = service.persist_validated_batch(self._batch(interpretations=(interpretation,)))
+
+        self.assertIsNotNone(payload_ref)
+        self.assertIsNotNone(payload_store.get_payload(payload_ref))
+        self.assertEqual(1, len(repository.find_interpretations(element_id="block:1")))
+
+    def test_persist_validated_batch_rejects_unvalidated_batch(self):
+        from drawing_graph.assistant_evidence_fusion_models import SemanticWriteBatch
+        repository = InMemorySemanticEvidenceRepository()
+        payload_store = InMemorySemanticPayloadStore()
+        attempt_log = InMemoryRecognitionAttemptLog()
+        service = self._service(repository, payload_store, attempt_log)
+        unvalidated = SemanticWriteBatch(
+            recognition_run_id="run:1",
+            schema_valid=False,
+            sanitized_payload_envelope={"run_id": "run:1"},
+        )
+
+        with self.assertRaises(ToolModelError):
+            service.persist_validated_batch(unvalidated)
+
+    def test_candidate_evidence_is_audit_only_and_not_written_as_edges(self):
+        from drawing_graph.recognition_models import RecognitionCandidateEvidence
+        repository = InMemorySemanticEvidenceRepository()
+        payload_store = InMemorySemanticPayloadStore()
+        attempt_log = InMemoryRecognitionAttemptLog()
+        service = self._service(repository, payload_store, attempt_log)
+        candidate = RecognitionCandidateEvidence(
+            relation_type='connected_to',
+            source_target_id='t1',
+            supporting_target_ids=('t2',),
+            status='candidate_relation',
+        )
+
+        payload_ref = service.persist_validated_batch(self._batch(candidate_evidence=(candidate,)))
+
+        self.assertIsNotNone(payload_ref)
+        self.assertFalse(hasattr(repository, 'write_relations'))
+
+
+if __name__ == '__main__':
+    unittest.main()

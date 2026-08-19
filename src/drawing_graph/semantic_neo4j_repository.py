@@ -99,6 +99,70 @@ class SemanticNeo4jRepository:
             statuses=statuses,
         )
 
+    def mark_evidence_stale(
+        self,
+        evidence_ids: tuple[str, ...],
+        *,
+        superseded_by_evidence_id: str,
+        stale_reason: str,
+        stale_at: str,
+        evidence_family_key: str,
+    ) -> tuple[str, ...]:
+        """按 family 和白名单证据类型幂等更新 stale/supersede 属性。
+
+        只允许更新 TextObservation 与三类 interpretation；不得匹配来源事实、
+        派生关系、candidate/formal 关系。
+        """
+
+        if not isinstance(evidence_ids, tuple) or not all(
+            isinstance(evidence_id, str) and evidence_id.strip() for evidence_id in evidence_ids
+        ):
+            raise ToolModelError("invalid_evidence_ids", "evidence_ids must be a tuple of non-empty strings")
+        for field_name, value in (
+            ("superseded_by_evidence_id", superseded_by_evidence_id),
+            ("stale_reason", stale_reason),
+            ("stale_at", stale_at),
+            ("evidence_family_key", evidence_family_key),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ToolModelError("missing_required_field", f"{field_name} must be a non-empty string")
+        if not evidence_ids:
+            return ()
+        allowed_labels = [
+            "TextObservation",
+            "BlockInterpretation",
+            "BasicInfoInterpretation",
+            "TableInterpretation",
+        ]
+        cypher = (
+            "MATCH (n)\n"
+            "WHERE n.id IN $evidence_ids\n"
+            "  AND any(label IN labels(n) WHERE label IN $allowed_labels)\n"
+            "SET n.superseded_by_evidence_id = $superseded_by_evidence_id,\n"
+            "    n.stale_reason = $stale_reason,\n"
+            "    n.stale_at = $stale_at,\n"
+            "    n.evidence_family_key = $evidence_family_key\n"
+            "WITH n\n"
+            "SET n.status = CASE WHEN 'TextObservation' IN labels(n) THEN 'stale' ELSE n.status END\n"
+            "SET n.analysis_status = CASE WHEN 'TextObservation' IN labels(n) THEN n.analysis_status ELSE 'stale' END\n"
+            "RETURN n.id AS id"
+        )
+        with self.driver.session() as session:
+            records = session.execute_write(
+                lambda transaction: list(
+                    transaction.run(
+                        cypher,
+                        evidence_ids=list(evidence_ids),
+                        allowed_labels=allowed_labels,
+                        superseded_by_evidence_id=superseded_by_evidence_id,
+                        stale_reason=stale_reason,
+                        stale_at=stale_at,
+                        evidence_family_key=evidence_family_key,
+                    )
+                )
+            )
+        return tuple(record["id"] for record in records)
+
 
 def _group_observations(
     observations: tuple[TextObservation, ...],

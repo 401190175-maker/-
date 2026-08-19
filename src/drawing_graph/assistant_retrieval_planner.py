@@ -41,6 +41,7 @@ class RetrievalPlanner:
         merged_steps = _merge_steps(steps)
         return RetrievalPlan(
             request_id=question_result.request_id,
+            subrequest_id=question_result.subrequest_id,
             steps=tuple(merged_steps),
             dedupe_keys=tuple(step.dedupe_key for step in merged_steps if step.dedupe_key),
             warnings=tuple(warnings),

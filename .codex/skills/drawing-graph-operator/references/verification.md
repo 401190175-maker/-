@@ -40,10 +40,13 @@ $env:NEO4J_TEST_PASSWORD = "<neo4j-test-password>"
 | Skill 发现/触发测试 | 权威路径发现、显式/隐式触发、工具路由 | MCP server 已连接真实库 |
 | HTTP 回归 | 第二阶段兼容性 | MCP transport 可用性 |
 | live Neo4j 集成 | 真实测试库链路 | 生产环境安全与容量 |
+| 产品三入口 fake 验收 | 产品 CLI、HTTP、MCP 共用 `AnswerPackage` 合同与只读边界 | MCP 宿主注册或 live Neo4j 正确性 |
 
 - fake runtime、HTTP health 和 STDIO smoke 都不能证明 live Neo4j。
 - MCP in-memory 测试不能替代 STDIO smoke；STDIO fake smoke 不能替代
   live Neo4j 集成；HTTP TestClient 不能替代 MCP session。
+- 产品 CLI、产品 HTTP TestClient 与产品 MCP in-memory 都不能相互冒充；必须分别
+  报告入口、transport 和 live 数据库状态。
 - skipped 继续标为 live Neo4j 未验证，不得计入 passed。
 
 ## 5. Skill 校验

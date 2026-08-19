@@ -99,7 +99,7 @@ class DrawingGraphToolFacade:
         page_id: str,
         target_types: tuple[str, ...],
         model_profile: str = "default",
-        prompt_version: str = "default",
+        prompt_version: str = "prompt-v1",
         write_back: bool = False,
     ) -> SemanticRecognitionResult:
         if self.semantic_service is None:
@@ -124,7 +124,7 @@ class DrawingGraphToolFacade:
         self,
         targets: tuple[SemanticTargetInput, ...],
         model_profile: str = "default",
-        prompt_version: str = "default",
+        prompt_version: str = "prompt-v1",
         contract_version: str = "1",
         write_back: bool = False,
         execution_policy: RecognitionExecutionPolicy | None = None,

@@ -8,9 +8,11 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from .assistant_evidence_fusion_models import SemanticWriteBatch
 from .recognition_execution import MultimodalRecognitionExecutionService
 from .recognition_metrics import RecognitionRateCard, RecognitionUsageMeter
 from .recognition_models import (
+    CacheOutcome,
     RecognitionAttempt,
     RecognitionCandidateEvidence,
     RecognitionCostSummary,
@@ -21,7 +23,11 @@ from .recognition_models import (
     RecognitionProviderUsage,
 )
 from .recognition_tasks import RecognitionTaskRegistry, build_default_task_registry
-from .semantic_cache import SemanticCacheKeyInput, build_semantic_cache_key
+from .semantic_cache import (
+    RequestSemanticMemo,
+    SemanticCacheKeyInput,
+    build_semantic_cache_key,
+)
 from .semantic_client import FakeMultimodalRecognitionClient, MultimodalRecognitionClient
 from .semantic_models import (
     BasicInfoInterpretation,
@@ -49,6 +55,8 @@ class SemanticRecognitionResult:
     latency_summary: RecognitionLatencySummary | None = None
     payload_ref: str | None = None
     warnings: tuple[str, ...] = ()
+    cache_outcomes: tuple[CacheOutcome, ...] = ()
+    write_batch: SemanticWriteBatch | None = None
 
 
 class SemanticRecognitionService:
@@ -68,6 +76,7 @@ class SemanticRecognitionService:
         payload_store: object | None = None,
         attempt_log: object | None = None,
         execution_policy: RecognitionExecutionPolicy | None = None,
+        request_memo_factory: object | None = None,
     ):
         if execution_service is None:
             provider = client or FakeMultimodalRecognitionClient()
@@ -89,6 +98,7 @@ class SemanticRecognitionService:
         self.payload_store = payload_store
         self.attempt_log = attempt_log
         self.default_execution_policy = execution_policy or RecognitionExecutionPolicy()
+        self.request_memo_factory = request_memo_factory or RequestSemanticMemo
 
     def recognize_page(
         self,
@@ -158,6 +168,7 @@ class SemanticRecognitionService:
                     "INVALID_ARGUMENT",
                     "target page_id must match page facts",
                 )
+        request_memo = self.request_memo_factory()
         (
             cached_observations,
             cached_interpretations,
@@ -170,6 +181,7 @@ class SemanticRecognitionService:
             model_profile,
             prompt_version,
             contract_version,
+            request_memo,
         )
         if not pending_targets:
             return SemanticRecognitionResult(
@@ -179,8 +191,11 @@ class SemanticRecognitionService:
                 persisted=False,
                 error_summary=None,
                 interpretations=tuple(cached_interpretations),
+                cache_outcomes=_build_cache_outcomes(
+                    targets, cached_observations, cached_interpretations, pending_targets, cache_keys
+                ),
             )
-        run_id = f"run:temp:{uuid4()}"
+        run_id = f"run:{uuid4()}" if write_back else f"run:temp:{uuid4()}"
         run_summary = None
         if write_back:
             if self.run_log is None:
@@ -203,8 +218,8 @@ class SemanticRecognitionService:
                     ),
                 },
                 write_back=True,
+                recognition_run_id=run_id,
             )
-            run_id = run_summary.recognition_run_id
         execution_results: list[RecognitionExecutionResult] = []
         targets_by_id = {target.target_id: target for target in targets}
         effective_policy = execution_policy or self.default_execution_policy
@@ -266,36 +281,46 @@ class SemanticRecognitionService:
             if isinstance(exc, ToolModelError):
                 raise
             raise ToolModelError("RECOGNITION_FAILED", "semantic recognition failed") from exc
-        if self.cache_service is not None:
-            for element_id, cache_key in cache_keys.items():
-                element_evidence = tuple(
-                    item
-                    for item in (*observations, *interpretations)
-                    if _evidence_element_id(item) == element_id
-                )
-                if cache_key is not None and element_evidence:
+        for element_id, cache_key in cache_keys.items():
+            element_evidence = tuple(
+                item
+                for item in (*observations, *interpretations)
+                if _evidence_element_id(item) == element_id
+            )
+            if cache_key is not None and element_evidence:
+                request_memo.put(cache_key, element_evidence)
+                if write_back and self.cache_service is not None:
                     self.cache_service.put(cache_key, element_evidence)
+        envelope, content_hash = _build_payload_envelope(
+            page_id=page_facts.page_id,
+            run_id=run_id,
+            status=result_status,
+            execution_results=execution_results,
+            summary=summary,
+            candidate_evidence=candidate_evidence,
+        )
+        write_batch = SemanticWriteBatch(
+            recognition_run_id=run_id,
+            schema_valid=True,
+            scope_valid=True,
+            payload_sanitized=True,
+            audit_material_complete=True,
+            run_summary=run_summary,
+            attempts=attempts,
+            sanitized_payload_envelope=envelope,
+            observations=observations,
+            interpretations=interpretations,
+            candidate_evidence=candidate_evidence,
+            cache_entries=(),
+        )
         payload_ref = None
         if write_back:
             try:
-                for attempt in attempts:
-                    self.attempt_log.append_attempt(attempt)
-                envelope, content_hash = _build_payload_envelope(
-                    page_id=page_facts.page_id,
-                    run_id=run_id,
-                    status=result_status,
-                    execution_results=execution_results,
-                    summary=summary,
-                    candidate_evidence=candidate_evidence,
-                )
-                payload_ref = self.payload_store.put_payload(envelope, content_hash, contract_version="1")
-                if observations:
-                    self.semantic_repository.save_observations(observations)
-                if interpretations:
-                    self.semantic_repository.save_interpretations(interpretations)
+                payload_ref = self.persist_validated_batch(write_batch)
             except Exception as exc:
                 if run_summary is not None:
                     self.run_log.fail_run(run_id, _error_summary(exc))
+                payload_ref = getattr(exc, "payload_ref", None)
                 return SemanticRecognitionResult(
                     recognition_run_id=run_id,
                     status=result_status,
@@ -363,7 +388,44 @@ class SemanticRecognitionService:
             latency_summary=latency_summary,
             payload_ref=payload_ref,
             warnings=warnings,
+            cache_outcomes=_build_cache_outcomes(
+                targets, cached_observations, cached_interpretations, pending_targets, cache_keys
+            ),
+            write_batch=write_batch,
         )
+
+    def persist_validated_batch(self, batch: SemanticWriteBatch) -> str | None:
+        """持久化一个已验证批次；不重新调用 provider，不重新生成 run ID。
+
+        若 payload 已成功但语义节点写入失败，异常上会保留 ``payload_ref``
+        以便上层按部分成功处理（不伪造全量成功）。
+        """
+
+        if batch.sanitized_payload_envelope is None:
+            raise ToolModelError("INVALID_ARGUMENT", "batch has no sanitized payload envelope")
+        if not (
+            batch.schema_valid
+            and batch.scope_valid
+            and batch.payload_sanitized
+            and batch.audit_material_complete
+        ):
+            raise ToolModelError("INVALID_ARGUMENT", "batch must be schema/scope/payload/audit validated")
+        if self.attempt_log is None or self.payload_store is None or self.semantic_repository is None:
+            raise ToolModelError("PERSISTENCE_UNAVAILABLE", "persistence dependencies are not configured")
+        for attempt in batch.attempts:
+            self.attempt_log.append_attempt(attempt)
+        envelope = dict(batch.sanitized_payload_envelope)
+        content_hash = _envelope_content_hash(envelope)
+        payload_ref = self.payload_store.put_payload(envelope, content_hash, contract_version="1")
+        try:
+            if batch.observations:
+                self.semantic_repository.save_observations(batch.observations)
+            if batch.interpretations:
+                self.semantic_repository.save_interpretations(batch.interpretations)
+        except Exception as exc:
+            setattr(exc, "payload_ref", payload_ref)
+            raise
+        return payload_ref
 
     def _group_pending(
         self,
@@ -400,6 +462,7 @@ class SemanticRecognitionService:
         model_profile: str,
         prompt_version: str,
         contract_version: str,
+        request_memo: RequestSemanticMemo | None = None,
     ):
         """按目标 cache key 划分缓存命中与待识别目标，不做外部调用。"""
 
@@ -427,11 +490,12 @@ class SemanticRecognitionService:
                 image_input=image_input,
             )
             cache_keys[element_id] = cache_key
-            cached = (
-                self.cache_service.get(cache_key)
-                if cache_key is not None and self.cache_service is not None
-                else None
-            )
+            cached = None
+            if cache_key is not None:
+                if self.cache_service is not None:
+                    cached = self.cache_service.get(cache_key)
+                if cached is None and request_memo is not None:
+                    cached = request_memo.get(cache_key)
             if cached is not None:
                 for item in cached:
                     if isinstance(item, TextObservation):
@@ -588,6 +652,26 @@ def _project_execution_results(
                     )
                 )
             elif str(output.task_type.value) == "block_semantic_identification":
+                block_observations: list[TextObservation] = []
+                for index, item in enumerate(output.output.get("observations") or ()):
+                    observation = _project_text_observation(
+                        item=item,
+                        output=output,
+                        target=target,
+                        element=element,
+                        result=result,
+                        page_facts=page_facts,
+                        model_profile=model_profile,
+                        prompt_version=prompt_version,
+                        output_contract_version=output_contract_version,
+                        cache_keys=cache_keys,
+                        observation_id=(
+                            f"obs:{result.recognition_run_id}:"
+                            f"{target.target_element_id}:{index}"
+                        ),
+                    )
+                    block_observations.append(observation)
+                    observations.append(observation)
                 interpretations.append(
                     _project_block_interpretation(
                         output=output,
@@ -599,6 +683,10 @@ def _project_execution_results(
                         prompt_version=prompt_version,
                         output_contract_version=output_contract_version,
                         cache_keys=cache_keys,
+                        linked_observation_ids=tuple(
+                            observation.observation_id
+                            for observation in block_observations
+                        ),
                     )
                 )
             elif str(output.task_type.value) == "basic_info_interpretation":
@@ -721,6 +809,11 @@ def _build_payload_envelope(
     return envelope, hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _envelope_content_hash(envelope: dict) -> str:
+    content = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
 def _project_text_observation(
     *,
     item,
@@ -733,9 +826,11 @@ def _project_text_observation(
     prompt_version: str,
     output_contract_version: str,
     cache_keys: dict,
+    observation_id: str | None = None,
 ) -> TextObservation:
     return TextObservation(
-        observation_id=f"obs:{result.recognition_run_id}:{target.target_element_id}",
+        observation_id=observation_id
+        or f"obs:{result.recognition_run_id}:{target.target_element_id}",
         recognition_run_id=result.recognition_run_id,
         target_element_id=target.target_element_id,
         target_element_type=target.target_type,
@@ -768,6 +863,7 @@ def _project_block_interpretation(
     prompt_version: str,
     output_contract_version: str,
     cache_keys: dict,
+    linked_observation_ids: tuple[str, ...] = (),
 ) -> BlockInterpretation:
     data = output.output.get("interpretation") or {}
     return BlockInterpretation(
@@ -777,14 +873,17 @@ def _project_block_interpretation(
         page_id=page_facts.page_id,
         summary=str(data.get("summary") or ""),
         interpreted_type=data.get("interpreted_type"),
-        components=tuple(data.get("components") or ()),
-        materials=tuple(data.get("materials") or ()),
-        dimensions=tuple(data.get("dimensions") or ()),
-        construction_features=tuple(data.get("construction_features") or ()),
-        spatial_relations=tuple(data.get("spatial_relations") or ()),
-        analysis_status=data.get("analysis_status") or "interpreted",
-        uncertainties=tuple(data.get("uncertainties") or ()),
-        supported_by_observation_ids=tuple(data.get("supported_by_observation_ids") or ()),
+        components=_semantic_text_tuple(data.get("components")),
+        materials=_semantic_text_tuple(data.get("materials")),
+        dimensions=_semantic_text_tuple(data.get("dimensions")),
+        construction_features=_semantic_text_tuple(data.get("construction_features")),
+        spatial_relations=_semantic_text_tuple(data.get("spatial_relations")),
+        analysis_status=_interpretation_status(data.get("analysis_status")),
+        uncertainties=_semantic_text_tuple(data.get("uncertainties")),
+        supported_by_observation_ids=_linked_observation_ids(
+            data,
+            linked_observation_ids,
+        ),
         payload_ref=None,
         cache_key=cache_keys.get(target.target_element_id),
         contract_version=output_contract_version,
@@ -793,6 +892,21 @@ def _project_block_interpretation(
         input_contract_version="1",
         preprocessing_version="preprocess-v1",
     )
+
+
+def _linked_observation_ids(
+    data: Mapping,
+    linked_observation_ids: tuple[str, ...],
+) -> tuple[str, ...]:
+    """把同一输出的 observations 确定性链接为 interpretation 的支撑证据。
+
+    优先使用服务端生成的同 run 同目标 observation ID；模型无法预知稳定
+    ID，因此显式声明只在没有可链接 observation 时作为后备。
+    """
+
+    if linked_observation_ids:
+        return tuple(dict.fromkeys(linked_observation_ids))
+    return _semantic_text_tuple(data.get("supported_by_observation_ids"))
 
 
 def _project_basic_info_interpretation(
@@ -820,7 +934,7 @@ def _project_basic_info_interpretation(
         drawing_number=output.output.get("drawing_number"),
         scale=output.output.get("scale"),
         date=output.output.get("date"),
-        analysis_status=output.output.get("analysis_status") or "interpreted",
+        analysis_status=_interpretation_status(output.output.get("analysis_status")),
         uncertainties=tuple(output.output.get("uncertainties") or ()),
         supported_by_observation_ids=(),
         payload_ref=None,
@@ -852,7 +966,7 @@ def _project_table_interpretation(
         page_id=page_facts.page_id,
         summary=str(output.output.get("summary") or ""),
         caption_ref=output.output.get("caption_ref"),
-        analysis_status=output.output.get("analysis_status") or "interpreted",
+        analysis_status=_interpretation_status(output.output.get("analysis_status")),
         uncertainties=tuple(output.output.get("uncertainties") or ()),
         supported_by_observation_ids=(),
         payload_ref=None,
@@ -875,6 +989,43 @@ def _observation_status(status) -> str:
     return mapping.get(str(status), str(status))
 
 
+def _interpretation_status(status) -> str:
+    value = str(status or "").strip().lower()
+    mapping = {
+        "": "interpreted",
+        "succeeded": "interpreted",
+        "success": "interpreted",
+        "complete": "interpreted",
+        "completed": "interpreted",
+        "confirmed": "interpreted",
+        "interpreted": "interpreted",
+        "partial": "partial",
+        "ambiguous": "ambiguous",
+        "not_found": "not_found",
+        "failed": "failed",
+        "recognition_failed": "failed",
+        "stale": "stale",
+    }
+    return mapping.get(value, "interpreted")
+
+
+def _semantic_text_tuple(value) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    values = value if isinstance(value, (list, tuple)) else (value,)
+    result: list[str] = []
+    for item in values:
+        if isinstance(item, str):
+            text = item.strip()
+        elif isinstance(item, (dict, list, tuple)):
+            text = json.dumps(item, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        else:
+            text = str(item).strip()
+        if text:
+            result.append(text)
+    return tuple(result)
+
+
 def _find_element(page_facts: PageSourceFacts, element_id: str):
     for element in page_facts.elements:
         if element.element_id == element_id:
@@ -892,6 +1043,63 @@ def _evidence_element_id(
     if isinstance(item, BasicInfoInterpretation):
         return item.basic_info_id
     return item.table_id
+
+
+def _build_cache_outcomes(
+    targets: tuple[SemanticTargetInput, ...],
+    cached_observations: list[TextObservation],
+    cached_interpretations: list,
+    pending_targets: list[SemanticTargetInput],
+    cache_keys: dict,
+) -> tuple[CacheOutcome, ...]:
+    """逐目标汇总实际缓存处置：hit 必须引用实际可复用 evidence ID。"""
+
+    pending_ids = {target.target_id for target in pending_targets}
+    reused_by_element: dict[str, list[str]] = {}
+    for observation in cached_observations:
+        reused_by_element.setdefault(observation.target_element_id, []).append(
+            observation.observation_id
+        )
+    for interpretation in cached_interpretations:
+        element_id = _evidence_element_id(interpretation)
+        reused_by_element.setdefault(element_id, []).append(
+            interpretation.interpretation_id
+        )
+    outcomes: list[CacheOutcome] = []
+    for target in targets:
+        element_id = target.target_element_id
+        cache_key = cache_keys.get(element_id)
+        provider_called = target.target_id in pending_ids
+        if not provider_called:
+            reused = tuple(reused_by_element.get(element_id, ()))
+            outcomes.append(
+                CacheOutcome(
+                    target_id=target.target_id,
+                    disposition="hit",
+                    cache_key=cache_key,
+                    reused_evidence_ids=reused,
+                    provider_called=False,
+                )
+            )
+        elif cache_key is None:
+            outcomes.append(
+                CacheOutcome(
+                    target_id=target.target_id,
+                    disposition="bypassed",
+                    cache_key=None,
+                    provider_called=True,
+                )
+            )
+        else:
+            outcomes.append(
+                CacheOutcome(
+                    target_id=target.target_id,
+                    disposition="miss",
+                    cache_key=cache_key,
+                    provider_called=True,
+                )
+            )
+    return tuple(outcomes)
 
 
 def _now() -> str:

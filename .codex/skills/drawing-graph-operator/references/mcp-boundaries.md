@@ -5,7 +5,7 @@
 
 ## 1. 工具清单与只读边界
 
-MCP server 名称为 `drawing-graph-qa`，首版只提供六个窄口径只读工具：
+QA MCP server 名称为 `drawing-graph-qa`，首版只提供六个窄口径只读工具：
 
 - `ask_drawing_page`
 - `ask_drawing_block`
@@ -18,13 +18,21 @@ MCP server 名称为 `drawing-graph-qa`，首版只提供六个窄口径只读�
 QAService 已允许的图谱信息。candidate、`CANDIDATE_*`、`matched_candidate`
 保持候选语义，不是正式事实。
 
+产品 MCP server 名称为 `drawing-assistant`，本地 STDIO 只读入口只提供
+`ask_drawing_assistant`。该工具只调用一次 `DrawingAssistantService.answer()`，
+输入不接受写回、Cypher、凭据、路径或底层对象字段；输出来自同一
+`AnswerPackage`，candidate、`CANDIDATE_*`、`matched_candidate` 仍保持候选语义。
+
 ## 2. MCP 优先与受控 QA CLI 后备
 
 - 已配置并可用时，Skill 优先选择 MCP QA 工具，按 `qa-workflows.md` 路由。
+- 测试完整产品自然语言问答链路时，Skill 优先选择产品 MCP 工具
+  `ask_drawing_assistant`，按 `product-test-workflows.md` 路由。
 - MCP 不可用、工具缺失、初始化失败或超时后，Skill 可以降级到受控 QA CLI
-  （`scripts/drawing_graph_qa.py`），但必须：
+  （`scripts/drawing_graph_qa.py`）或产品只读 CLI（`scripts/drawing_assistant.py`），
+  但必须：
   1. 明确说明 MCP 未成功使用及原因类别；
-  2. 只使用受控 QA CLI，不直接执行 Cypher；
+  2. 只使用受控 CLI，不直接执行 Cypher；
   3. 保持 `write_back=false`；
   4. 不把 CLI 结果标记为 MCP 已验证，并如实报告验证状态。
 - 禁止静默降级：未向用户说明就切换入口，或把 CLI 结果冒充 MCP 结果。

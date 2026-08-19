@@ -98,6 +98,7 @@ class QwenPreparedImageAdapterTests(unittest.TestCase):
 
         payload = captured["payload"]
         self.assertEqual("qwen3-vl-plus", payload["model"])
+        self.assertEqual({"type": "json_object"}, payload["response_format"])
         self.assertEqual(_prompt().system_instruction, payload["messages"][0]["content"])
         user_content = payload["messages"][1]["content"]
         self.assertEqual(_prompt().user_instruction, user_content[0]["text"])

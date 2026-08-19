@@ -22,3 +22,6 @@ neo4j/
 
 # Local agent state
 .agents/
+
+# Local skill sync cache
+.dsh/

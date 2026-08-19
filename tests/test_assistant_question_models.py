@@ -5,6 +5,7 @@ import unittest
 from drawing_graph.assistant_models import (
     AssistantRequest,
     AssistantScope,
+    AssistantSubrequest,
     ClarificationItem,
     EvidenceRequirement,
     EvidenceType,
@@ -226,6 +227,55 @@ class QuestionUnderstandingEventTests(unittest.TestCase):
             (ReasonCode.AMBIGUOUS_REFERENCE, ReasonCode.UNSUPPORTED_QUESTION),
             event.reason_codes,
         )
+
+
+class QuestionUnderstandingSubrequestTests(unittest.TestCase):
+    def test_top_level_result_defaults_subrequest_id_to_none(self):
+        result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+        )
+        self.assertIsNone(result.subrequest_id)
+
+    def test_projected_subrequest_id_is_preserved(self):
+        result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:1",
+        )
+        self.assertEqual("sub:1", result.subrequest_id)
+
+    def test_blank_subrequest_id_is_rejected(self):
+        with self.assertRaises(ValueError):
+            QuestionUnderstandingResult(
+                request_id="req:1",
+                question_type="page_summary",
+                subrequest_id=" ",
+            )
+
+    def test_existing_single_intent_output_is_unchanged(self):
+        result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            scope=AssistantScope(page_id="page:1"),
+        )
+        self.assertEqual("page_summary", result.question_type)
+        self.assertEqual((), result.subrequests)
+        self.assertIsNone(result.subrequest_id)
+
+    def test_existing_multi_intent_output_is_unchanged(self):
+        subrequests = (
+            AssistantSubrequest(subrequest_id="sub:1", question_type="page_summary"),
+        )
+        result = QuestionUnderstandingResult(
+            request_id="req:9",
+            question_type="multi_intent",
+            scope=AssistantScope(page_id="page:1"),
+            subrequests=subrequests,
+        )
+        self.assertEqual("req:9", result.request_id)
+        self.assertEqual("sub:1", result.subrequests[0].subrequest_id)
+        self.assertIsNone(result.subrequest_id)
 
 
 if __name__ == "__main__":

@@ -406,7 +406,7 @@ class MultimodalRecognitionContractMatrixTests(unittest.TestCase):
             source = Path(tmp) / "page-1.png"
             _write_png(source)
             service, client, *_ = _build_service((_payload("block_semantic_identification"),))
-            tight_policy = RecognitionExecutionPolicy(deadline_seconds=30.0)
+            tight_policy = RecognitionExecutionPolicy(deadline_seconds=0.05)
             result = service.recognize_targets(
                 _facts("block_semantic_identification", str(source)),
                 (_target("block_semantic_identification"),),
@@ -438,9 +438,10 @@ class MultimodalRecognitionContractMatrixTests(unittest.TestCase):
         with _fixture_dir() as tmp:
             source = Path(tmp) / "page-1.png"
             _write_png(source)
+            cache = InMemorySemanticCacheService()
             service, client, run_log, *_ = _build_service(
                 (_payload("element_text_observation"),),
-                cache=InMemorySemanticCacheService(),
+                cache=cache,
             )
             first = service.recognize_targets(
                 _facts("element_text_observation", str(source)),
@@ -450,6 +451,9 @@ class MultimodalRecognitionContractMatrixTests(unittest.TestCase):
                 execution_policy=_policy(),
             )
             self.assertEqual(1, len(client.requests))
+            for observation in first.observations:
+                if observation.cache_key:
+                    cache.put(observation.cache_key, (observation,))
             second = service.recognize_targets(
                 _facts("element_text_observation", str(source)),
                 (_target("element_text_observation"),),

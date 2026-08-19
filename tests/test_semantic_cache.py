@@ -6,9 +6,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from drawing_graph.semantic_cache import (
+    EvidenceFamilyKeyInput,
+    InMemorySemanticCacheService,
+    RequestSemanticMemo,
     SemanticCacheKeyInput,
+    build_evidence_family_key,
     build_section_match_cache_key,
     build_semantic_cache_key,
+    is_evidence_family_key,
 )
 from drawing_graph.tool_models import BBox, ToolModelError
 
@@ -127,6 +132,74 @@ class SemanticCacheTest(unittest.TestCase):
         self.assertTrue(base.startswith("semantic:"))
         self.assertNotEqual(base, changed_contract)
         self.assertNotEqual(base, changed_preprocessing)
+
+
+class EvidenceFamilyKeyTests(unittest.TestCase):
+    def _family_inputs(self, **overrides):
+        values = {
+            "target_id": "target:1",
+            "task_type": "element_text_observation",
+            "output_slot": "text",
+            "normalization_scope": "default",
+        }
+        values.update(overrides)
+        return EvidenceFamilyKeyInput(**values)
+
+    def test_same_input_generates_same_family_key(self):
+        first = build_evidence_family_key(self._family_inputs())
+        second = build_evidence_family_key(self._family_inputs())
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith("family:"))
+
+    def test_family_key_is_stable_across_version_dimensions(self):
+        base = build_evidence_family_key(self._family_inputs())
+        self.assertTrue(base.startswith("family:"))
+
+    def test_family_key_differs_from_cache_key(self):
+        family_key = build_evidence_family_key(self._family_inputs())
+        cache_key = build_semantic_cache_key(cache_inputs())
+        self.assertNotEqual(family_key, cache_key)
+        self.assertTrue(is_evidence_family_key(family_key))
+        self.assertFalse(is_evidence_family_key(cache_key))
+
+    def test_any_component_change_generates_different_family_key(self):
+        base = build_evidence_family_key(self._family_inputs())
+        for field_name in ("target_id", "task_type", "output_slot", "normalization_scope"):
+            changed = build_evidence_family_key(self._family_inputs(**{field_name: getattr(self._family_inputs(), field_name) + "-changed"}))
+            with self.subTest(field_name=field_name):
+                self.assertNotEqual(base, changed)
+
+    def test_cache_service_rejects_family_key(self):
+        service = InMemorySemanticCacheService()
+        family_key = build_evidence_family_key(self._family_inputs())
+        with self.assertRaises(ToolModelError):
+            service.get(family_key)
+        with self.assertRaises(ToolModelError):
+            service.put(family_key, ())
+
+    def test_rejects_invalid_family_input(self):
+        with self.assertRaises(ToolModelError):
+            build_evidence_family_key(self._family_inputs(target_id=""))
+        with self.assertRaises(ToolModelError):
+            build_evidence_family_key("not-an-input")
+
+
+class RequestSemanticMemoTests(unittest.TestCase):
+    def test_memo_reuses_within_one_instance(self):
+        memo = RequestSemanticMemo()
+        memo.put("semantic:key", ("obs:1",))
+        self.assertEqual(("obs:1",), memo.get("semantic:key"))
+
+    def test_memo_is_invisible_across_instances(self):
+        first = RequestSemanticMemo()
+        second = RequestSemanticMemo()
+        first.put("semantic:key", ("obs:1",))
+        self.assertIsNone(second.get("semantic:key"))
+
+    def test_memo_rejects_family_key(self):
+        memo = RequestSemanticMemo()
+        with self.assertRaises(ToolModelError):
+            memo.put("family:abc", ())
 
 
 if __name__ == "__main__":

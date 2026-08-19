@@ -118,6 +118,54 @@ def _hash_payload(payload: dict[str, Any]) -> str:
     return f"semantic:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
 
 
+@dataclass(frozen=True)
+class EvidenceFamilyKeyInput:
+    """Stable lineage-scoped inputs for one evidence family.
+
+    Family key deliberately excludes image/model/prompt/contract/bbox
+    versions: it identifies the same semantic slot across those changes and
+    must never be used for cache hits.
+    """
+
+    target_id: str
+    task_type: str
+    output_slot: str
+    normalization_scope: str = "default"
+
+    def __post_init__(self) -> None:
+        for field_name in ("target_id", "task_type", "output_slot", "normalization_scope"):
+            _require_text(getattr(self, field_name), field_name)
+
+
+def build_evidence_family_key(inputs: EvidenceFamilyKeyInput) -> str:
+    """Build a stable lineage key from stable target/task/slot/scope inputs."""
+
+    if not isinstance(inputs, EvidenceFamilyKeyInput):
+        raise ToolModelError("invalid_family_input", "family inputs must be an EvidenceFamilyKeyInput")
+    payload = {
+        "target_id": inputs.target_id,
+        "task_type": inputs.task_type,
+        "output_slot": inputs.output_slot,
+        "normalization_scope": inputs.normalization_scope,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return f"family:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+
+
+def is_evidence_family_key(value: str) -> bool:
+    """Return whether a string is an evidence family key, not a cache key."""
+
+    return isinstance(value, str) and value.startswith("family:")
+
+
+def _reject_family_key(cache_key: str) -> None:
+    if is_evidence_family_key(cache_key):
+        raise ToolModelError(
+            "invalid_cache_key",
+            "evidence family key cannot be used as a semantic cache key",
+        )
+
+
 def _require_text(value: Any, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ToolModelError("missing_required_field", f"{field_name} must be a non-empty string")
@@ -147,17 +195,40 @@ class InMemorySemanticCacheService:
 
     def get(self, cache_key: str) -> Any | None:
         _require_text(cache_key, "cache_key")
+        _reject_family_key(cache_key)
         return self._values.get(cache_key)
 
     def put(self, cache_key: str, value: Any) -> None:
         _require_text(cache_key, "cache_key")
+        _reject_family_key(cache_key)
+        self._values[cache_key] = value
+
+
+class RequestSemanticMemo:
+    """Request-scoped semantic memo; reused within one request, not cross-request."""
+
+    def __init__(self):
+        self._values: dict[str, Any] = {}
+
+    def get(self, cache_key: str) -> Any | None:
+        _require_text(cache_key, "cache_key")
+        _reject_family_key(cache_key)
+        return self._values.get(cache_key)
+
+    def put(self, cache_key: str, value: Any) -> None:
+        _require_text(cache_key, "cache_key")
+        _reject_family_key(cache_key)
         self._values[cache_key] = value
 
 
 __all__ = (
+    "EvidenceFamilyKeyInput",
     "InMemorySemanticCacheService",
+    "RequestSemanticMemo",
     "SemanticCacheKeyInput",
     "SemanticCacheService",
+    "build_evidence_family_key",
     "build_semantic_cache_key",
     "build_section_match_cache_key",
+    "is_evidence_family_key",
 )

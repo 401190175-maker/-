@@ -241,6 +241,10 @@ class RetrievalBundleBuilderSourceFactTests(unittest.TestCase):
             {"x_min": 1, "y_min": 2, "x_max": 3, "y_max": 4},
             metadata["bbox"],
         )
+        self.assertEqual(
+            {"x_min": 0.1, "y_min": 0.2, "x_max": 0.3, "y_max": 0.4},
+            metadata["normalized_bbox"],
+        )
         self.assertEqual(FactKind.SOURCE_FACT, item.fact_kind)
 
     def test_block_trace_maps_to_source_fact_with_scope_and_bbox(self):
@@ -682,6 +686,101 @@ class RetrievalBundleBuilderRelationSemanticTests(unittest.TestCase):
         self.assertIsNone(metadata["contract_version"])
         self.assertEqual((), bundle.formal_relations)
 
+    def test_candidate_relations_carry_group_relation_type_and_direction(self):
+        requirement = make_requirement(
+            EvidenceType.CANDIDATE_RELATIONS,
+            AssistantScope(page_id="page:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "list_candidate_relations",
+                    requirement.requirement_id,
+                    {"page_id": "page:1", "block_id": None, "relation_type": None, "status": None},
+                    AssistantScope(page_id="page:1"),
+                ),
+            ),
+        )
+        candidate = make_candidate_summary("group:3")
+        raw = RawRetrievalResult(results={"step:1": (candidate,)})
+        calls = (make_call("step:1", "list_candidate_relations", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        metadata = dict(bundle.candidate_relations[0].evidence_metadata)
+        self.assertEqual("group:3", metadata["candidate_group_id"])
+        self.assertEqual("candidate_caption_of", metadata["relation_type"])
+        self.assertEqual("block:1->candidate_caption_of", metadata["direction"])
+
+    def test_derived_relations_carry_relation_type_and_direction(self):
+        requirement = make_requirement(
+            EvidenceType.BLOCK_RELATIONS,
+            AssistantScope(block_id="block:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "get_block_relations",
+                    requirement.requirement_id,
+                    {"block_id": "block:1"},
+                    AssistantScope(block_id="block:1"),
+                ),
+            ),
+        )
+        relations = BlockRelations(block_id="block:1", caption_ids=("caption:1",))
+        raw = RawRetrievalResult(results={"step:1": relations})
+        calls = (make_call("step:1", "get_block_relations", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        metadata = dict(bundle.derived_relations[0].evidence_metadata)
+        self.assertEqual("has_caption", metadata["relation_type"])
+        self.assertEqual("block:1->caption:1", metadata["direction"])
+        self.assertIsNone(metadata["candidate_group_id"])
+
+    def test_block_relations_project_normalizable_relation_values(self):
+        from drawing_graph.assistant_evidence_normalization import EvidenceNormalizer
+        from drawing_graph.assistant_evidence_fusion_factory import _default_normalization_registry
+
+        requirement = make_requirement(
+            EvidenceType.BLOCK_RELATIONS,
+            AssistantScope(block_id="block:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "get_block_relations",
+                    requirement.requirement_id,
+                    {"block_id": "block:1"},
+                    AssistantScope(block_id="block:1"),
+                ),
+            ),
+        )
+        relations = BlockRelations(block_id="block:1", caption_ids=("caption:1",))
+        raw = RawRetrievalResult(results={"step:1": relations})
+        calls = (make_call("step:1", "get_block_relations", 1),)
+
+        bundle = RetrievalBundleBuilder().build(make_result(requirement), plan, raw, calls)
+        normalizer = EvidenceNormalizer(rule_registry=_default_normalization_registry())
+        result = normalizer.normalize(bundle.derived_relations)
+
+        self.assertEqual(1, len(result.normalized))
+        self.assertEqual((), result.isolated)
+
 
 def make_candidate_summary(candidate_group_id: str):
     from drawing_graph.tool_models import CandidateRelationSummary
@@ -888,6 +987,116 @@ class RetrievalBundleBuilderSummaryTests(unittest.TestCase):
         self.assertEqual(1, len(bundle.warnings))
         self.assertEqual(ReasonCode.RESULT_TRUNCATED, bundle.warnings[0].reason_code)
         self.assertEqual(2, len(bundle.source_facts))
+
+
+class RetrievalSubrequestProjectionTests(unittest.TestCase):
+    def test_bundle_carries_plan_subrequest_id(self):
+        requirement = make_requirement(
+            EvidenceType.PAGE_SOURCE_FACTS,
+            AssistantScope(page_id="page:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            subrequest_id="sub:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "get_page_source_facts",
+                    requirement.requirement_id,
+                    {"page_id": "page:1", "element_types": None, "include_image_meta": True},
+                    AssistantScope(page_id="page:1"),
+                ),
+            ),
+        )
+        facts = PageSourceFacts(page_id="page:1", image_path=None, elements=())
+        raw = RawRetrievalResult(results={"step:1": facts})
+        calls = (make_call("step:1", "get_page_source_facts", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        self.assertEqual("sub:1", bundle.subrequest_id)
+
+    def test_top_level_bundle_keeps_subrequest_id_none(self):
+        requirement = make_requirement(
+            EvidenceType.BLOCK_TRACE,
+            AssistantScope(block_id="block:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "get_block_trace",
+                    requirement.requirement_id,
+                    {"block_id": "block:1"},
+                    AssistantScope(block_id="block:1"),
+                ),
+            ),
+        )
+        trace = BlockTrace(
+            block_id="block:1",
+            project_id="project:1",
+            drawing_set_id="set:1",
+            page_id="page:1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            image_path=None,
+        )
+        raw = RawRetrievalResult(results={"step:1": trace})
+        calls = (make_call("step:1", "get_block_trace", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        self.assertIsNone(bundle.subrequest_id)
+
+    def test_subrequest_passthrough_does_not_change_buckets_or_status(self):
+        requirement = make_requirement(
+            EvidenceType.BLOCK_TRACE,
+            AssistantScope(block_id="block:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            subrequest_id="sub:2",
+            steps=(
+                make_step(
+                    "step:1",
+                    "get_block_trace",
+                    requirement.requirement_id,
+                    {"block_id": "block:1"},
+                    AssistantScope(block_id="block:1"),
+                ),
+            ),
+        )
+        trace = BlockTrace(
+            block_id="block:1",
+            project_id="project:1",
+            drawing_set_id="set:1",
+            page_id="page:1",
+            bbox=BBox(1, 2, 3, 4),
+            normalized_bbox=BBox(0.1, 0.2, 0.3, 0.4),
+            image_path=None,
+        )
+        raw = RawRetrievalResult(results={"step:1": trace})
+        calls = (make_call("step:1", "get_block_trace", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        self.assertEqual("sub:2", bundle.subrequest_id)
+        self.assertEqual(1, len(bundle.source_facts))
+        self.assertEqual((), bundle.missing_evidence)
+        self.assertEqual(RetrievalStatus.OK, bundle.status)
 
 
 class RetrievalBundleDecisionMetadataCompatibilityTests(unittest.TestCase):

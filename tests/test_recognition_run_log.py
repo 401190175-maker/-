@@ -136,5 +136,25 @@ class RecognitionRunLogTest(unittest.TestCase):
         self.assertEqual("preprocess-v2", completed.preprocessing_version)
 
 
+class ExplicitRunIdTests(unittest.TestCase):
+    def test_create_run_accepts_explicit_run_id(self):
+        log = InMemoryRecognitionRunLog()
+        run = log.create_run(
+            page_id="page:1",
+            model_profile="default",
+            prompt_version="p1",
+            input_refs={},
+            write_back=True,
+            recognition_run_id="run:explicit:1",
+        )
+        self.assertEqual("run:explicit:1", run.recognition_run_id)
+        self.assertEqual("run:explicit:1", log.get_run("run:explicit:1").recognition_run_id)
+
+    def test_create_run_without_explicit_id_auto_generates(self):
+        log = InMemoryRecognitionRunLog()
+        run = log.create_run("page:1", "default", "p1", {}, False)
+        self.assertTrue(run.recognition_run_id.startswith("run:"))
+
+
 if __name__ == "__main__":
     unittest.main()

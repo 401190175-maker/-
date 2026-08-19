@@ -420,5 +420,51 @@ class RetrievalPlannerDedupePayloadLimitTests(unittest.TestCase):
         self.assertEqual(100, plan.steps[0].limit)
 
 
+class RetrievalSubrequestPlanTests(unittest.TestCase):
+    def test_subrequest_id_is_passed_through(self):
+        requirement = EvidenceRequirement(
+            requirement_id="req-ev:50",
+            evidence_type=EvidenceType.PAGE_SOURCE_FACTS,
+            target_scope=AssistantScope(page_id="page:1"),
+        )
+        result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:1",
+            required_evidence=(requirement,),
+        )
+        plan = RetrievalPlanner().plan(result, RetrievalPolicy())
+        self.assertEqual("sub:1", plan.subrequest_id)
+
+    def test_top_level_plan_keeps_subrequest_id_none(self):
+        requirement = EvidenceRequirement(
+            requirement_id="req-ev:51",
+            evidence_type=EvidenceType.PAGE_SOURCE_FACTS,
+            target_scope=AssistantScope(page_id="page:1"),
+        )
+        plan = RetrievalPlanner().plan(make_result(requirement), RetrievalPolicy())
+        self.assertIsNone(plan.subrequest_id)
+
+    def test_subrequest_passthrough_does_not_change_steps(self):
+        requirement = EvidenceRequirement(
+            requirement_id="req-ev:52",
+            evidence_type=EvidenceType.PAGE_SOURCE_FACTS,
+            target_scope=AssistantScope(page_id="page:1"),
+        )
+        result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:2",
+            required_evidence=(requirement,),
+        )
+        plan = RetrievalPlanner().plan(result, RetrievalPolicy())
+        self.assertEqual(1, len(plan.steps))
+        step = plan.steps[0]
+        self.assertEqual("get_page_source_facts", step.facade_method)
+        self.assertEqual("page:1", step.parameters["page_id"])
+        self.assertFalse(step.include_payload)
+        self.assertEqual(("req-ev:52",), step.requirement_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

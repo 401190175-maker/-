@@ -446,6 +446,34 @@ class RecognitionCandidateEvidence:
 
 
 @dataclass(frozen=True)
+class CacheOutcome:
+    """Per-target actual cache disposition from the 04 execution layer.
+
+    ``disposition`` 表达 hit/miss/bypassed/unknown；cache hit 必须引用实际
+    可复用 evidence ID，不能只凭 key 存在报告命中。
+    """
+
+    target_id: str
+    disposition: str
+    cache_key: str | None = None
+    reused_evidence_ids: tuple[str, ...] = ()
+    provider_called: bool = False
+
+    def __post_init__(self) -> None:
+        _require_text(self.target_id, "target_id")
+        if self.disposition not in {"hit", "miss", "bypassed", "unknown"}:
+            raise ToolModelError("invalid_disposition", "disposition must be hit/miss/bypassed/unknown")
+        _require_optional_text(self.cache_key, "cache_key")
+        object.__setattr__(
+            self,
+            "reused_evidence_ids",
+            _read_text_tuple(self.reused_evidence_ids, "reused_evidence_ids"),
+        )
+        if not isinstance(self.provider_called, bool):
+            raise ToolModelError("invalid_provider_called", "provider_called must be a boolean")
+
+
+@dataclass(frozen=True)
 class RecognitionExecutionResult:
     """Safe execution summary returned by the 04 execution layer."""
 
@@ -562,6 +590,7 @@ def _require_non_negative_number(value: Any, field_name: str) -> None:
 
 
 __all__ = (
+    "CacheOutcome",
     "ContextElementRef",
     "CostStatus",
     "ProviderErrorCategory",

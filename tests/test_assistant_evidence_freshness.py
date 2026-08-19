@@ -564,5 +564,70 @@ class EvidenceCacheProtectionTests(unittest.TestCase):
         self.assertEqual(CacheDisposition.FULL_HIT, updated.cache_disposition)
 
 
+class EvidenceFreshnessNarrowHelperTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evaluator = EvidenceFreshnessEvaluator()
+        self.requirement = observation_requirement()
+        self.policy = make_policy()
+
+    def bundle(self, observations, source_facts=(page_source_facts(),)):
+        return RetrievalBundle(
+            request_id="req:1",
+            semantic_observations=observations,
+            source_facts=source_facts,
+        )
+
+    def test_helper_reuses_existing_freshness_rules(self):
+        bundle = self.bundle((observation_evidence("evidence:obs:1"),))
+        results = self.evaluator.evaluate_evidence(
+            (observation_evidence("evidence:obs:1"),),
+            self.policy,
+            bundle,
+            self.requirement,
+        )
+        self.assertEqual(1, len(results))
+        self.assertTrue(results[0].is_current)
+        self.assertTrue(results[0].dimensions["image_hash"])
+        self.assertTrue(results[0].dimensions["bbox"])
+
+    def test_helper_detects_image_change(self):
+        bundle = self.bundle((observation_evidence("evidence:obs:1", image_hash="hash:old"),))
+        results = self.evaluator.evaluate_evidence(
+            (observation_evidence("evidence:obs:1", image_hash="hash:old"),),
+            self.policy,
+            bundle,
+            self.requirement,
+        )
+        self.assertFalse(results[0].is_current)
+        self.assertIn(ReasonCode.IMAGE_CHANGED, results[0].reason_codes)
+
+    def test_missing_metadata_is_not_current(self):
+        evidence = observation_evidence("evidence:obs:1")
+        metadata = dict(evidence.evidence_metadata)
+        del metadata["image_hash"]
+        evidence = EvidenceItem(
+            evidence_id=evidence.evidence_id,
+            fact_kind=evidence.fact_kind,
+            scope=evidence.scope,
+            status=evidence.status,
+            value={},
+            evidence_metadata=metadata,
+        )
+        bundle = self.bundle((evidence,))
+        results = self.evaluator.evaluate_evidence(
+            (evidence,),
+            self.policy,
+            bundle,
+            self.requirement,
+        )
+        self.assertFalse(results[0].is_current)
+        self.assertIn("image_hash", results[0].missing_metadata)
+
+    def test_helper_is_read_only_and_returns_tuple(self):
+        bundle = self.bundle(())
+        results = self.evaluator.evaluate_evidence((), self.policy, bundle, self.requirement)
+        self.assertEqual((), results)
+
+
 if __name__ == "__main__":
     unittest.main()

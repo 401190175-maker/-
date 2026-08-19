@@ -115,6 +115,7 @@ class RetrievalBundleBuilder:
             status = RetrievalStatus.OK
         return RetrievalBundle(
             request_id=question_result.request_id,
+            subrequest_id=plan.subrequest_id,
             scope=question_result.scope,
             source_facts=tuple(buckets["source_facts"]),
             derived_relations=tuple(buckets["derived_relations"]),
@@ -209,6 +210,7 @@ class RetrievalBundleBuilder:
                             "block_id": value.block_id,
                             "image_path": value.image_path,
                             "bbox": _bbox_mapping(value.bbox),
+                            "normalized_bbox": _bbox_mapping(value.normalized_bbox),
                         },
                     ),
                 )
@@ -327,6 +329,9 @@ class RetrievalBundleBuilder:
                         evidence_metadata={
                             "status": item.status,
                             "recognition_run_id": item.recognition_run_id,
+                            "candidate_group_id": getattr(item, "candidate_group_id", None),
+                            "relation_type": getattr(item, "relation_type", None),
+                            "direction": _relation_direction(item),
                             "cache_key": None,
                             "task_type": None,
                             "model_profile": None,
@@ -449,8 +454,16 @@ class RetrievalBundleBuilder:
                                 "block_id": relations.block_id,
                                 "relation_type": f"has_{relation_kind}",
                                 "target_id": target_id,
+                                "subject": relations.block_id,
+                                "predicate": f"has_{relation_kind}",
+                                "objects": (target_id,),
                             },
                             source_call_id=source_call_id,
+                            evidence_metadata={
+                                "relation_type": f"has_{relation_kind}",
+                                "direction": f"{relations.block_id}->{target_id}",
+                                "candidate_group_id": None,
+                            },
                         ),
                     )
                 )
@@ -471,8 +484,16 @@ class RetrievalBundleBuilder:
                                 "block_id": relations.block_id,
                                 "relation_type": relation_kind,
                                 "target_id": target_id,
+                                "subject": relations.block_id,
+                                "predicate": relation_kind,
+                                "objects": (target_id,),
                             },
                             source_call_id=source_call_id,
+                            evidence_metadata={
+                                "relation_type": relation_kind,
+                                "direction": f"{relations.block_id}->{target_id}",
+                                "candidate_group_id": f"{relations.block_id}:{relation_kind}:{target_id}",
+                            },
                         ),
                     )
                 )
@@ -514,6 +535,9 @@ class RetrievalBundleBuilder:
                     "match_status": item.match_status,
                     "rule_version": getattr(item, "rule_version", None),
                     "alias_rule_id": getattr(item, "alias_rule_id", None),
+                    "candidate_group_id": getattr(item, "candidate_group_id", None),
+                    "relation_type": "section_match",
+                    "direction": f"{item.cross_section_id}->caption",
                     "cache_key": None,
                     "task_type": None,
                     "model_profile": None,
@@ -583,6 +607,14 @@ def _bbox_mapping(bbox: object) -> dict[str, float]:
         "x_max": float(bbox.x_max),
         "y_max": float(bbox.y_max),
     }
+
+
+def _relation_direction(item: object) -> str | None:
+    source = getattr(item, "block_id", None) or getattr(item, "cross_section_id", None)
+    if source is None:
+        return None
+    target = getattr(item, "relation_type", None)
+    return f"{source}->{target or 'target'}"
 
 
 def _to_plain(value: object) -> object:

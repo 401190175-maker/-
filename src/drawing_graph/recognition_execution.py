@@ -26,6 +26,7 @@ from .tool_models import PageSourceFacts, ToolModelError
 
 
 _DEFAULT_SINGLE_CALL_TIMEOUT_SECONDS = 60.0
+_DEADLINE_RESERVE_SECONDS = 1.0
 
 
 class MultimodalRecognitionExecutionService:
@@ -163,7 +164,10 @@ class MultimodalRecognitionExecutionService:
             prepared_images=prepared_images,
             output_contract_version=validated.output_contract_version,
             request_fingerprint=rendered.fingerprint,
-            timeout_seconds=min(validated.deadline_seconds, _DEFAULT_SINGLE_CALL_TIMEOUT_SECONDS),
+            timeout_seconds=min(
+                _DEFAULT_SINGLE_CALL_TIMEOUT_SECONDS,
+                max(0.1, validated.deadline_seconds - _DEADLINE_RESERVE_SECONDS),
+            ),
         )
 
     def _failure(self, request: RecognitionExecutionRequest, status, error: Exception) -> RecognitionExecutionResult:

@@ -382,6 +382,167 @@ class QAHttpConfig:
 
 
 @dataclass(frozen=True)
+class AssistantHttpConfig:
+    """Immutable product HTTP service settings loaded from environment variables.
+
+    只服务产品 HTTP adapter：默认监听 loopback、默认只读、默认关闭 CORS 和
+    OpenAPI docs。Neo4j 密码与 API token 使用 ``repr=False`` 并在自定义
+    ``__repr__`` 中屏蔽，不进入错误输出或日志。与 :class:`QAHttpConfig` 分离
+    命名、分离默认端口，避免旧 QA 与产品 assistant 的配置合同漂移。
+    """
+
+    neo4j_uri: str
+    neo4j_user: str
+    neo4j_password: str = field(repr=False)
+    host: str = "127.0.0.1"
+    port: int = 8001
+    allow_remote: bool = False
+    allowed_origins: tuple[str, ...] = ()
+    api_token: str = field(default="", repr=False)
+    max_request_bytes: int = 65536
+    request_timeout_seconds: float = 30.0
+    max_concurrent_requests: int = 8
+    docs_enabled: bool = False
+    log_level: str = "INFO"
+
+    @classmethod
+    def from_env(cls) -> "AssistantHttpConfig":
+        """Create a validated product HTTP configuration from process environment."""
+
+        env = os.environ
+        return cls(
+            neo4j_uri=_required_env("NEO4J_URI"),
+            neo4j_user=_required_env("NEO4J_USER"),
+            neo4j_password=_required_env("NEO4J_PASSWORD"),
+            host=_required_text(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_HOST", "127.0.0.1"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_HOST",
+            ),
+            port=_read_int(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_PORT", "8001"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_PORT",
+                minimum=1,
+                maximum=65535,
+            ),
+            allow_remote=_read_bool(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_ALLOW_REMOTE", "false"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_ALLOW_REMOTE",
+            ),
+            allowed_origins=_read_origins(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_ALLOWED_ORIGINS", "")
+            ),
+            api_token=env.get("DRAWING_GRAPH_ASSISTANT_HTTP_API_TOKEN", "").strip(),
+            max_request_bytes=_read_int(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_MAX_REQUEST_BYTES", "65536"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_MAX_REQUEST_BYTES",
+                minimum=1,
+            ),
+            request_timeout_seconds=_read_number(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_REQUEST_TIMEOUT_SECONDS", "30"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_REQUEST_TIMEOUT_SECONDS",
+                exclusive_minimum=0,
+            ),
+            max_concurrent_requests=_read_int(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_MAX_CONCURRENT_REQUESTS", "8"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_MAX_CONCURRENT_REQUESTS",
+                minimum=1,
+            ),
+            docs_enabled=_read_bool(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_DOCS_ENABLED", "false"),
+                "DRAWING_GRAPH_ASSISTANT_HTTP_DOCS_ENABLED",
+            ),
+            log_level=_read_log_level(
+                env.get("DRAWING_GRAPH_ASSISTANT_HTTP_LOG_LEVEL", "INFO")
+            ),
+        )
+
+    def __post_init__(self) -> None:
+        if self.port < 1 or self.port > 65535:
+            raise ConfigError("DRAWING_GRAPH_ASSISTANT_HTTP_PORT must be between 1 and 65535")
+        if self.max_request_bytes < 1:
+            raise ConfigError("DRAWING_GRAPH_ASSISTANT_HTTP_MAX_REQUEST_BYTES must be a positive integer")
+        if self.request_timeout_seconds <= 0:
+            raise ConfigError("DRAWING_GRAPH_ASSISTANT_HTTP_REQUEST_TIMEOUT_SECONDS must be positive")
+        if self.max_concurrent_requests < 1:
+            raise ConfigError("DRAWING_GRAPH_ASSISTANT_HTTP_MAX_CONCURRENT_REQUESTS must be a positive integer")
+        if not _is_loopback(self.host):
+            if not self.allow_remote:
+                raise ConfigError("non-loopback host requires DRAWING_GRAPH_ASSISTANT_HTTP_ALLOW_REMOTE=true")
+            if not self.api_token:
+                raise ConfigError("non-loopback host requires DRAWING_GRAPH_ASSISTANT_HTTP_API_TOKEN")
+        if self.docs_enabled and not _is_loopback(self.host):
+            raise ConfigError("DRAWING_GRAPH_ASSISTANT_HTTP_DOCS_ENABLED=true is only allowed on loopback hosts")
+        for origin in self.allowed_origins:
+            if origin == "*" or not origin.startswith(("http://", "https://")):
+                raise ConfigError(
+                    "DRAWING_GRAPH_ASSISTANT_HTTP_ALLOWED_ORIGINS must be explicit http/https origins"
+                )
+
+    def __repr__(self) -> str:
+        """Return a debug representation with secrets masked."""
+
+        return (
+            "AssistantHttpConfig("
+            f"neo4j_uri={self.neo4j_uri!r}, "
+            f"neo4j_user={self.neo4j_user!r}, "
+            "neo4j_password='********', "
+            f"host={self.host!r}, "
+            f"port={self.port!r}, "
+            f"allow_remote={self.allow_remote!r}, "
+            f"allowed_origins={self.allowed_origins!r}, "
+            "api_token='********', "
+            f"max_request_bytes={self.max_request_bytes!r}, "
+            f"request_timeout_seconds={self.request_timeout_seconds!r}, "
+            f"max_concurrent_requests={self.max_concurrent_requests!r}, "
+            f"docs_enabled={self.docs_enabled!r}, "
+            f"log_level={self.log_level!r}"
+            ")"
+        )
+
+
+@dataclass(frozen=True)
+class AssistantMcpConfig:
+    """Immutable STDIO MCP runtime settings for the product assistant adapter.
+
+    只服务本地 STDIO MCP product adapter：包含 Neo4j 连接信息和日志级别，不复用
+    HTTP 的 host/port/CORS/token 等字段，也不扩大 :class:`ImportConfig`。
+    Neo4j 密码使用 ``repr=False`` 并在自定义 ``__repr__`` 中屏蔽。
+    """
+
+    neo4j_uri: str
+    neo4j_user: str
+    neo4j_password: str = field(repr=False)
+    log_level: str = "INFO"
+
+    @classmethod
+    def from_env(cls) -> "AssistantMcpConfig":
+        """Create a validated MCP configuration from process environment variables."""
+
+        env = os.environ
+        log_level = env.get("DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL", "INFO").strip().upper()
+        if not log_level:
+            raise ConfigError("DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL must not be empty")
+        return cls(
+            neo4j_uri=_required_env("NEO4J_URI"),
+            neo4j_user=_required_env("NEO4J_USER"),
+            neo4j_password=_required_env("NEO4J_PASSWORD"),
+            log_level=log_level,
+        )
+
+    def __repr__(self) -> str:
+        """Return a debug representation with the database password masked."""
+
+        return (
+            "AssistantMcpConfig("
+            f"neo4j_uri={self.neo4j_uri!r}, "
+            f"neo4j_user={self.neo4j_user!r}, "
+            "neo4j_password='********', "
+            f"log_level={self.log_level!r}"
+            ")"
+        )
+
+
+@dataclass(frozen=True)
 class QAMcpConfig:
     """Immutable STDIO MCP runtime settings loaded from environment variables.
 

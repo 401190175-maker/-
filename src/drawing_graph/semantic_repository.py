@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Protocol
 
 from .semantic_models import (
     BasicInfoInterpretation,
     BlockInterpretation,
+    InterpretationStatus,
+    ObservationStatus,
     TableInterpretation,
     TextObservation,
 )
@@ -72,6 +75,25 @@ class SectionMatchQueryPort(Protocol):
         """Return section match summaries without writing."""
 
 
+class SemanticEvidenceLineageWritePort(Protocol):
+    """Narrow write boundary: mark existing semantic observation/interpretation stale.
+
+    只允许更新图谱内 TextObservation 与三类 interpretation 的受控 lineage
+    属性；不允许来源事实、派生关系、candidate/formal 关系或任意 Cypher。
+    """
+
+    def mark_evidence_stale(
+        self,
+        evidence_ids: tuple[str, ...],
+        *,
+        superseded_by_evidence_id: str,
+        stale_reason: str,
+        stale_at: str,
+        evidence_family_key: str,
+    ) -> tuple[str, ...]:
+        """Mark whitelisted semantic evidence stale and return updated IDs."""
+
+
 class InMemorySemanticEvidenceRepository:
     """In-memory semantic evidence repository for unit tests."""
 
@@ -129,12 +151,63 @@ class InMemorySemanticEvidenceRepository:
             results = [item for item in results if item.analysis_status.value in allowed_statuses]
         return tuple(results)
 
+    def mark_evidence_stale(
+        self,
+        evidence_ids: tuple[str, ...],
+        *,
+        superseded_by_evidence_id: str,
+        stale_reason: str,
+        stale_at: str,
+        evidence_family_key: str,
+    ) -> tuple[str, ...]:
+        if self.fail_writes:
+            raise ToolModelError("SEMANTIC_EVIDENCE_UNAVAILABLE", "semantic evidence repository is unavailable")
+        if not isinstance(evidence_ids, tuple) or not all(
+            isinstance(evidence_id, str) and evidence_id.strip() for evidence_id in evidence_ids
+        ):
+            raise ToolModelError("invalid_evidence_ids", "evidence_ids must be a tuple of non-empty strings")
+        _require_text(superseded_by_evidence_id, "superseded_by_evidence_id")
+        _require_text(stale_reason, "stale_reason")
+        _require_text(stale_at, "stale_at")
+        _require_text(evidence_family_key, "evidence_family_key")
+        updated: list[str] = []
+        for evidence_id in evidence_ids:
+            if evidence_id in self._observations:
+                observation = self._observations[evidence_id]
+                self._observations[evidence_id] = dataclasses.replace(
+                    observation,
+                    status=ObservationStatus.STALE,
+                    superseded_by_evidence_id=superseded_by_evidence_id,
+                    stale_reason=stale_reason,
+                    stale_at=stale_at,
+                    evidence_family_key=evidence_family_key,
+                )
+                updated.append(evidence_id)
+            elif evidence_id in self._interpretations:
+                interpretation = self._interpretations[evidence_id]
+                self._interpretations[evidence_id] = dataclasses.replace(
+                    interpretation,
+                    analysis_status=InterpretationStatus.STALE,
+                    superseded_by_evidence_id=superseded_by_evidence_id,
+                    stale_reason=stale_reason,
+                    stale_at=stale_at,
+                    evidence_family_key=evidence_family_key,
+                )
+                updated.append(evidence_id)
+        return tuple(updated)
+
 
 def _require_interpretation_tuple(values: object) -> None:
     if not isinstance(values, tuple) or not all(
         isinstance(item, (BlockInterpretation, BasicInfoInterpretation, TableInterpretation)) for item in values
     ):
         raise ToolModelError("invalid_interpretations", "interpretations must be a tuple of interpretation DTOs")
+
+
+def _require_text(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ToolModelError("missing_required_field", f"{field_name} must be a non-empty string")
+    return value
 
 
 def _source_element_id(
@@ -151,5 +224,6 @@ __all__ = (
     "InMemorySemanticEvidenceRepository",
     "SectionMatchQueryPort",
     "SectionMatchWritePort",
+    "SemanticEvidenceLineageWritePort",
     "SemanticEvidenceRepositoryPort",
 )

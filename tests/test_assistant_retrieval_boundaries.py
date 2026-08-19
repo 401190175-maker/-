@@ -30,10 +30,28 @@ FORBIDDEN_CALLS = (
     "write_back=True",
 )
 
+# 产品 HTTP/MCP adapter 层模块位于 facade/service 边界之外，有独立的
+# test_assistant_http_boundaries / test_assistant_mcp_boundaries 静态边界测试；
+# 它们需要引用 driver/facade 装配与"Neo4j"字样，不属于本检索闭环扫描范围。
+ADAPTER_SOURCE_NAMES = frozenset(
+    {
+        "assistant_adapter_serialization.py",
+        "assistant_http.py",
+        "assistant_http_models.py",
+        "assistant_http_runtime.py",
+        "assistant_mcp_models.py",
+        "assistant_mcp_tools.py",
+        "assistant_mcp_runtime.py",
+        "assistant_mcp_server.py",
+    }
+)
+
 
 def assistant_sources() -> list[tuple[Path, str]]:
     sources = []
     for path in sorted(SOURCE_DIR.glob(ASSISTANT_PATTERN)):
+        if path.name in ADAPTER_SOURCE_NAMES:
+            continue
         sources.append((path, path.read_text(encoding="utf-8")))
     return sources
 

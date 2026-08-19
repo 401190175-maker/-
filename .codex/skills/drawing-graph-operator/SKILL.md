@@ -24,11 +24,31 @@ description: >-
 处理本项目相关请求时，按以下顺序执行：
 
 1. **先读当前文件，再行动。** 行动前先读取项目根目录的 `README.md`、`Module.md`、`architecture.md` 以及受影响源码和测试；不要依赖旧记忆或旧结论替代当前文件状态。
-2. **MCP 优先：优先选择已配置的 MCP QA 工具。** 已配置且可用时，按 `references/qa-workflows.md` 路由到六个只读 MCP 工具；MCP 不可用时按 `references/mcp-boundaries.md` 透明降级到受控 QA CLI。禁止静默降级或冒充 MCP 已验证。
+2. **MCP 优先：优先选择已配置的 MCP 工具。** 固定 QA 问题按 `references/qa-workflows.md` 路由到六个只读 MCP QA 工具；产品级自然语言问答测试按 `references/product-test-workflows.md` 路由到产品只读 MCP 工具 `ask_drawing_assistant`。MCP 不可用时按 `references/mcp-boundaries.md` 透明降级到受控 CLI。禁止静默降级或冒充 MCP 已验证。
 3. **只经由受控入口使用项目能力。** 项目图谱能力只能通过 `DrawingGraphToolFacade`、`create_neo4j_tool_facade()` 或薄 CLI adapter `scripts/drawing_graph_tool.py` 使用。禁止直接创建 Neo4j driver、拼写或执行 Cypher、调用底层 repository 写回方法或运行规则函数。
 4. **默认 `write_back=false`。** 查询默认只读，语义识别默认 dry-run。没有用户明确授权、环境确认和验证计划时，不写数据库、不持久化语义证据、不提升候选关系。
 5. **分层输出事实。** 回答必须区分来源事实、派生关系、语义观察、语义解释、候选关系与正式关系；候选关系不是正式事实，`matched_candidate` 不等于正式图谱关系。
 6. **如实报告验证状态。** 单元测试、集成测试、live Neo4j 验证分开报告；集成测试跳过不等于 live Neo4j 已通过。
+
+## 前置门与失败封闭（强制执行）
+
+任何请求的第一步动作固定为“前置门”，完成后才能进入查询、识别或回答：
+
+1. **读取当前文档**：README.md、Module.md、architecture.md 及本次请求影响的源码与测试（skill references 按需渐进读取）。
+2. **运行前置检查**：执行 `python scripts\skill_preflight.py`，完整引用其 JSON 输出作为“前置门报告”；脚本只读，不输出任何密钥。
+3. **按报告选择入口**，只允许三类：
+   - MCP 可用 → 按 `references/qa-workflows.md` / `references/product-test-workflows.md` 使用 MCP；
+   - MCP 不可用但 Neo4j 环境齐全且连接成功 → 按 `references/mcp-boundaries.md` 透明降级到受控 CLI；
+   - 其余情况 → 进入失败封闭（下一条）。
+4. **失败封闭**：所有受控入口不可用时，禁止继续执行查询、识别或任何替代识别手段；必须按 `references/blocked-path.md` 输出 BLOCKED 报告并询问用户。只有用户明确授权后，才可执行授权范围内的兜底方案。
+5. **禁止兜底清单**（未获用户明确授权一律不得使用）：
+   - 本地 OCR（Tesseract、Windows OCR、PaddleOCR、EasyOCR 等）；
+   - 用图像查看/视觉工具代替项目识别能力；
+   - 第三方识别 API 或未列入受控入口的任何识别通道；
+   - 直接读取 PNG 猜测文字、直接写 Cypher、直接创建 Neo4j driver、直接调用 repository 写回方法。
+6. 写回默认 `write_back=false`；所有回答按 `references/output-contract.md` 分层并如实标注验证状态；BLOCKED、兜底、降级结果一律不得冒充 MCP 已验证。
+
+配置来源说明：preflight 与受控 CLI 均从当前进程环境变量读取配置；本机配置可存放在已 gitignore 的 `.env` 文件，使用前需先加载到当前会话（加载方法见 README「2.1 首次运行配置清单」），不要把 `.env` 内容复制到任何会提交的文件或日志。
 
 ## 按需读取 references
 
@@ -41,7 +61,9 @@ description: >-
 | 需要运行测试、配置集成测试环境或报告验证状态 | `references/verification.md` |
 | 需要组织图谱查询回答的事实分层和证据字段 | `references/output-contract.md` |
 | 需要把自然语言问题路由到 MCP QA 工具或组合多意图 | `references/qa-workflows.md` |
+| 需要用产品级自然语言问答入口测试 `DrawingAssistantService.answer()`、产品 CLI/HTTP/MCP adapter 或三入口一致性 | `references/product-test-workflows.md` |
 | 需要判断 MCP 不可用、超时、降级或禁止调用链 | `references/mcp-boundaries.md` |
+| 所有受控入口不可用、需要输出 BLOCKED 报告或请求授权 | `references/blocked-path.md` |
 
 ## 禁止事项
 

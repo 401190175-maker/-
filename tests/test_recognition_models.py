@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from drawing_graph.recognition_models import (
+    CacheOutcome,
     CostStatus,
     ProviderErrorCategory,
     RecognitionAttemptStatus,
@@ -23,7 +24,7 @@ from drawing_graph.recognition_models import (
     ValidatedRecognitionOutput,
     ValidatedRecognitionRequest,
 )
-from drawing_graph.tool_models import SemanticTargetInput
+from drawing_graph.tool_models import SemanticTargetInput, ToolModelError
 
 
 class RecognitionTaskTypeTests(unittest.TestCase):
@@ -702,6 +703,35 @@ class RecognitionExecutionResultTests(unittest.TestCase):
                 status="succeeded",
                 persisted="yes",
             )
+
+
+class CacheOutcomeTests(unittest.TestCase):
+    def test_cache_outcome_carries_target_disposition_and_reused_ids(self):
+        outcome = CacheOutcome(
+            target_id="target:1",
+            disposition="hit",
+            cache_key="semantic:abc",
+            reused_evidence_ids=("obs:1",),
+            provider_called=False,
+        )
+        self.assertEqual("target:1", outcome.target_id)
+        self.assertEqual("hit", outcome.disposition)
+        self.assertEqual("semantic:abc", outcome.cache_key)
+        self.assertEqual(("obs:1",), outcome.reused_evidence_ids)
+        self.assertFalse(outcome.provider_called)
+
+    def test_miss_outcome_has_provider_called_true(self):
+        outcome = CacheOutcome(target_id="target:1", disposition="miss", cache_key="semantic:abc", provider_called=True)
+        self.assertEqual("miss", outcome.disposition)
+        self.assertTrue(outcome.provider_called)
+
+    def test_rejects_invalid_disposition(self):
+        with self.assertRaises(ToolModelError):
+            CacheOutcome(target_id="target:1", disposition="not_a_disposition")
+
+    def test_rejects_empty_target_id(self):
+        with self.assertRaises(ToolModelError):
+            CacheOutcome(target_id="", disposition="hit")
 
 
 if __name__ == "__main__":

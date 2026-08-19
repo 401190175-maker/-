@@ -26,6 +26,7 @@ class DrawingGraphSkillRoutingBehaviorTests(unittest.TestCase):
         self.boundaries = (SKILL_DIR / "references/mcp-boundaries.md").read_text(encoding="utf-8")
         self.output = (SKILL_DIR / "references/output-contract.md").read_text(encoding="utf-8")
         self.verification = (SKILL_DIR / "references/verification.md").read_text(encoding="utf-8")
+        self.product = (SKILL_DIR / "references/product-test-workflows.md").read_text(encoding="utf-8")
         self.skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 
     def test_six_intent_prompts_route_to_six_tools(self):
@@ -66,6 +67,17 @@ class DrawingGraphSkillRoutingBehaviorTests(unittest.TestCase):
         for phrase in ("STDIO smoke", "不能证明 live Neo4j", "未验证"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.verification)
+
+    def test_product_natural_language_tests_route_to_product_assistant_tool(self):
+        for phrase in (
+            "ask_drawing_assistant",
+            "DrawingAssistantService.answer()",
+            "scripts/drawing_assistant.py",
+            "write_back=false",
+            "不得写成 MCP 已验证",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.product)
 
 
 if __name__ == "__main__":

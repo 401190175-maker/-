@@ -135,6 +135,34 @@ class RecognitionPromptRenderingTests(unittest.TestCase):
         self.assertIn("ambiguous", rendered.system_instruction)
         self.assertIn("not_found", rendered.system_instruction)
 
+    def test_block_prompt_includes_machine_readable_output_contract(self) -> None:
+        spec = build_default_task_registry().get("block_semantic_identification")
+        rendered = RecognitionPromptRenderer().render(
+            spec,
+            _request(task_type="block_semantic_identification"),
+            (_prepared_image(),),
+        )
+
+        self.assertIn("JSON object", rendered.system_instruction)
+        for field_name in ("target_id", "target_type", "status", "confidence", "interpretation"):
+            self.assertIn(field_name, rendered.system_instruction)
+        for field_name in ("summary", "interpreted_type", "components", "analysis_status"):
+            self.assertIn(field_name, rendered.system_instruction)
+        for status in ("succeeded", "partial", "ambiguous", "not_found"):
+            self.assertIn(status, rendered.system_instruction)
+
+    def test_block_prompt_instructs_visible_text_observations(self) -> None:
+        spec = build_default_task_registry().get("block_semantic_identification")
+        rendered = RecognitionPromptRenderer().render(
+            spec,
+            _request(task_type="block_semantic_identification"),
+            (_prepared_image(),),
+        )
+
+        self.assertIn("observations", rendered.system_instruction)
+        self.assertIn("raw_text", rendered.system_instruction)
+        self.assertIn("normalized_text", rendered.system_instruction)
+
     def test_relation_task_requires_candidate_marking(self) -> None:
         spec = build_default_task_registry().get("relation_evidence_extraction")
         rendered = RecognitionPromptRenderer().render(

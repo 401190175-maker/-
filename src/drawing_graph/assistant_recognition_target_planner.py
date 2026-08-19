@@ -36,8 +36,7 @@ _GENERATABLE_STATUSES = frozenset(
 )
 
 _TASK_TYPE_BY_EVIDENCE_TYPE = {
-    EvidenceType.TEXT_OBSERVATIONS: "text_observation",
-    EvidenceType.STRUCTURED_INTERPRETATIONS: "structured_interpretation",
+    EvidenceType.TEXT_OBSERVATIONS: "element_text_observation",
 }
 
 _REQUIRED_OUTPUTS_BY_EVIDENCE_TYPE = {
@@ -181,7 +180,7 @@ class RecognitionTargetPlanner:
                     ReasonCode.TARGET_LOCATION_MISSING,
                 )
             ]
-        task_type = _TASK_TYPE_BY_EVIDENCE_TYPE.get(requirement.evidence_type)
+        task_type = RecognitionTargetPlanner._task_type(requirement, location)
         if task_type is None:
             return [
                 RecognitionTargetPlanner._blocked(
@@ -354,7 +353,6 @@ class RecognitionTargetPlanner:
                     location.page_id,
                     location.element_id,
                     location.image_path,
-                    location.image_hash,
                     location.bbox,
                 )
             )
@@ -364,7 +362,6 @@ class RecognitionTargetPlanner:
                     location.page_id,
                     location.block_id,
                     location.image_path,
-                    location.image_hash,
                     location.bbox,
                 )
             )
@@ -372,9 +369,28 @@ class RecognitionTargetPlanner:
             (
                 location.page_id,
                 location.image_path,
-                location.image_hash,
             )
         )
+
+    @staticmethod
+    def _task_type(
+        requirement: EvidenceRequirement,
+        location: _Location,
+    ) -> str | None:
+        """Map semantic evidence gaps to concrete 04 recognition task types."""
+
+        if requirement.evidence_type is EvidenceType.TEXT_OBSERVATIONS:
+            if location.target_type == "CrossSection":
+                return "section_label_observation"
+            return _TASK_TYPE_BY_EVIDENCE_TYPE[EvidenceType.TEXT_OBSERVATIONS]
+        if requirement.evidence_type is EvidenceType.STRUCTURED_INTERPRETATIONS:
+            if location.target_type == "DrawingBlock":
+                return "block_semantic_identification"
+            if location.target_type == "DrawingBasicInfo":
+                return "basic_info_interpretation"
+            if location.target_type == "Table":
+                return "table_interpretation"
+        return None
 
     @staticmethod
     def _build_cache_key(

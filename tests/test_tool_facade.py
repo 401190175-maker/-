@@ -108,6 +108,17 @@ class ToolFacadePreciseTargetTests(unittest.TestCase):
         self.assertEqual("1", forwarded["contract_version"])
         self.assertEqual("element:1", forwarded["targets"][0].target_element_id)
 
+    def test_precise_entry_defaults_to_execution_prompt_version(self):
+        service = RecordingSemanticService()
+        facade = DrawingGraphToolFacade(
+            read_port=FakeDrawingGraphReadPort(source_facts={"page:1": page_facts()}),
+            semantic_service=service,
+        )
+
+        facade.recognize_semantic_targets((precise_target(),))
+
+        self.assertEqual("prompt-v1", service.calls[0]["prompt_version"])
+
     def test_entry_forwards_explicit_write_back(self):
         service = RecordingSemanticService()
         facade = DrawingGraphToolFacade(

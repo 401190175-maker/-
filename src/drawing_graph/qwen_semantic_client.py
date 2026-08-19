@@ -138,6 +138,7 @@ class QwenMultimodalRecognitionClient:
                     "content": tuple(content_parts),
                 },
             ),
+            "response_format": {"type": "json_object"},
             "temperature": 0,
         }
 

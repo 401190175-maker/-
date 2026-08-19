@@ -18,7 +18,7 @@ Project -> DrawingSet -> DrawingPage -> DrawingBlock
 当前阶段仍不包含 OCR、Ava 专有 adapter、全量自动语义扫描、默认真实云模型调用、`NEAR` 空间关系网络，也不设置或推断 `DrawingBlock.block_type`；本地只读 MCP adapter 与只读 HTTP API 已实现，见 QA 编排入口。
 `MATCHES_SECTION_CAPTION`（`CrossSection -[:MATCHES_SECTION_CAPTION]-> BlockCaption`）不是默认生成关系；只有在双方存在可比较 `TextObservation`、规范化逻辑键一致、同页候选唯一且无规则冲突时才可作为正式语义关系写入。证据不足、多候选、跨页或规则边界不明确时，只返回或写入 `CANDIDATE_MATCHES_SECTION_CAPTION`，不得把候选判断投影为正式事实。
 
-模块职责、新接口、新依赖、数据变化和架构变化同步记录在 `Module.md`，单页端到端 CLI 验收见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`。当前已新增 Python 应用层 `DrawingGraphToolFacade`：它通过只读 port 包装 `QueryService` 能力，通过 `SemanticRecognitionService` 编排按需语义识别，并通过 `RecognitionRunLogPort` 与 `SemanticEvidenceRepositoryPort` 管理语义证据边界。语义证据层已落地：`TextObservation` 与三类 `Interpretation` 数据契约、确定性缓存键与内存缓存、不可变 payload 存储、基于来源事实的图像输入构造、图谱内语义节点幂等写入（`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`，以及 `HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`）、图谱外 `RecognitionRun` 日志（recognition/interpretation/candidate_review 三类 run）、稳定查询投影和 facade 语义查询。断面专项已落地：`SectionLabelNormalizer` 区分 alphabetic/roman/numeric/alphanumeric/unknown，`SectionAliasRuleStore` 管理图谱外已确认别名规则，`SectionMatchService` 仅在双方存在可比较 `TextObservation`、逻辑键一致、候选唯一且无冲突时给出正式匹配，否则只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`。默认 `write_back=false`，语义识别与断面匹配以 dry-run 返回临时结果；只有显式 `write_back=true` 才写入图谱外 run log、图谱内证据或受控语义边。`RecognitionRun` 图谱外，`TextObservation` 图谱内，二者只通过 `recognition_run_id` 关联。候选关系不是正式事实，`matched_candidate` 也不等于正式图谱关系；候选审核仍必须经过 `CandidateReviewService` 和硬规则。当前已实现只读 HTTP API（`src/drawing_graph/qa_http.py` + `scripts\serve_drawing_graph_qa.py`）与本地只读 STDIO MCP adapter（`src/drawing_graph/qa_mcp_*.py` + `scripts\serve_drawing_graph_mcp.py`），并提供可选 Qwen/DashScope 多模态客户端；仍未实现 Ava 专有 adapter、全量自动语义扫描、默认真实云模型调用、远程 MCP、OAuth、多 worker 或 HTTP 写回；真实 DashScope 与真实 Neo4j 语义写入的 live 验证仍需单独执行。MCP 接入保持 Neo4j 节点、关系、约束、索引保持不变，`RecognitionRun` 图谱外与 `TextObservation`/`Interpretation` 图谱内的边界不变。
+模块职责、新接口、新依赖、数据变化和架构变化同步记录在 `Module.md`，单页端到端 CLI 验收见 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`，333 页全量数据导入验收见 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`，答案生成与只读总编排验收见 `docs/acceptance/ANSWER_GENERATION_MVP_ACCEPTANCE.md`，追溯与反馈专项验收见 `docs/acceptance/TRACE_FEEDBACK_ACCEPTANCE.md`，产品 adapter 验收见 `docs/acceptance/PRODUCT_ADAPTER_ACCEPTANCE.md`。当前已新增 Python 应用层 `DrawingGraphToolFacade`：它通过只读 port 包装 `QueryService` 能力，通过 `SemanticRecognitionService` 编排按需语义识别，并通过 `RecognitionRunLogPort` 与 `SemanticEvidenceRepositoryPort` 管理语义证据边界。语义证据层已落地：`TextObservation` 与三类 `Interpretation` 数据契约、确定性缓存键与内存缓存、不可变 payload 存储、基于来源事实的图像输入构造、图谱内语义节点幂等写入（`TextObservation`、`BlockInterpretation`、`BasicInfoInterpretation`、`TableInterpretation`，以及 `HAS_OBSERVATION`、`HAS_INTERPRETATION`、`SUPPORTED_BY`）、图谱外 `RecognitionRun` 日志（recognition/interpretation/candidate_review 三类 run）、稳定查询投影和 facade 语义查询。断面专项已落地：`SectionLabelNormalizer` 区分 alphabetic/roman/numeric/alphanumeric/unknown，`SectionAliasRuleStore` 管理图谱外已确认别名规则，`SectionMatchService` 仅在双方存在可比较 `TextObservation`、逻辑键一致、候选唯一且无冲突时给出正式匹配，否则只保留 `CANDIDATE_MATCHES_SECTION_CAPTION`。默认 `write_back=false`，语义识别与断面匹配以 dry-run 返回临时结果；只有显式 `write_back=true` 才写入图谱外 run log、图谱内证据或受控语义边。`RecognitionRun` 图谱外，`TextObservation` 图谱内，二者只通过 `recognition_run_id` 关联。候选关系不是正式事实，`matched_candidate` 也不等于正式图谱关系；候选审核仍必须经过 `CandidateReviewService` 和硬规则。产品级只读 CLI/HTTP/MCP 问答 adapter 已实现，其中产品 HTTP/MCP 只调用 `DrawingAssistantService.answer()`，旧 QA HTTP/MCP 仍只调用 `DrawingGraphQAService.ask()`；产品运行审计的追溯与反馈内部能力已实现，但只写注入的 trace/feedback store，不新增 Neo4j schema 或业务事实。当前已实现只读 QA HTTP API（`src/drawing_graph/qa_http.py` + `scripts\serve_drawing_graph_qa.py`）、本地只读 QA STDIO MCP adapter（`src/drawing_graph/qa_mcp_*.py` + `scripts\serve_drawing_graph_mcp.py`）以及产品级只读 HTTP/MCP adapter（`src/drawing_graph/assistant_http.py`、`src/drawing_graph/assistant_mcp_*.py` + `scripts\serve_drawing_assistant*.py`），并提供可选 Qwen/DashScope 多模态客户端；仍未实现 Ava 专有 adapter、全量自动语义扫描、默认真实云模型调用、远程 MCP、OAuth、多 worker、HTTP/MCP 写回、外部产品级反馈入口或外部持久化 trace/feedback store；真实 HTTP socket、MCP STDIO 子进程、真实 MCP 宿主注册、真实 DashScope 与真实 Neo4j 语义写入的 live 验证仍需单独执行。MCP 接入保持 Neo4j 节点、关系、约束、索引保持不变，`RecognitionRun` 图谱外与 `TextObservation`/`Interpretation` 图谱内的边界不变。
 
 当前实现状态：基础 Neo4j 导入闭环、离线派生关系增强闭环和候选关系复核骨架已经完成。基础导入负责来源事实层的稳定入库与追溯；离线增强负责 `Table -[:HAS_CAPTION]-> TableCaption`、`DrawingPage -[:USES_BASIC_INFO]-> DrawingBasicInfo`、`DrawingBlock` 起点的 `HAS_CAPTION`、`HAS_ANNOTATION`、`HAS_SECTION_MARK` 正式派生关系，以及 `CANDIDATE_CAPTION_OF`、`CANDIDATE_HAS_SECTION_MARK` 空间候选关系。候选关系 AI 复核是独立显式流程，不挂到基础导入或默认离线增强；查询侧通过 `get_block_trace()` 和 `get_block_relations()` 返回可复核的业务 ID、图片路径、bbox、候选 ID 和增强状态。
 
@@ -77,9 +77,11 @@ QA 编排入口
 Skill -> MCP client -> STDIO MCP adapter -> DrawingGraphQAService
   -> DrawingGraphToolFacade -> ports / services / repository / Neo4j
 
-产品公共合同与通用检索闭环入口（首阶段已落地）
-  -> Product adapter（后续 CLI / HTTP / MCP / Web UI，当前未实现）
-  -> DrawingAssistantService（后续完整产品编排，当前未实现）
+产品内部能力（01/03/04/05/06/07/08 已落地，产品级只读 CLI/HTTP/MCP 已实现）
+  -> Product CLI adapter（scripts/drawing_assistant.py，已实现）
+  -> Product HTTP adapter（scripts/serve_drawing_assistant.py + src/drawing_graph/assistant_http.py，已实现；只读）
+  -> Product MCP adapter（scripts/serve_drawing_assistant_mcp.py + src/drawing_graph/assistant_mcp_*.py，已实现；本地 STDIO 只读）
+  -> DrawingAssistantService（07 只读总编排，已实现）
        -> QuestionUnderstandingService（01 问题理解闭环已实现）
             -> QuestionTextNormalizer / ScopeResolver / RuleQuestionRouter / IntentSplitter
             -> EvidenceRequirementFactory / ClarificationPolicy / QuestionUnderstandingTraceBuilder
@@ -87,8 +89,20 @@ Skill -> MCP client -> STDIO MCP adapter -> DrawingGraphQAService
             -> RetrievalPlanner
             -> RetrievalExecutor
             -> RetrievalBundleBuilder
+       -> SemanticGapDecisionService（03 已实现）
+       -> SemanticRecognitionService / MultimodalRecognitionExecutionService（04 已实现）
+       -> EvidenceFusionService -> EvidenceBundle（05 已实现）
+       -> AnswerGenerationService（06 答案生成，已实现）
+       -> AnswerPackage / machine_answer / text_answer
+       -> optional TraceabilityService -> TraceStorePort（07 产品运行追溯）
   -> DrawingGraphToolFacade
   -> ports / services / repository / Neo4j
+
+产品内部反馈 API（尚无外部 adapter）
+  -> FeedbackService（08）
+       -> FeedbackPermissionPolicy / FeedbackStateMachine / FeedbackStorePort
+       -> CandidateReviewAdapter（仅 request_review）
+            -> CandidateReviewService -> 受控 repository
 ```
 
 分层原则：
@@ -97,7 +111,7 @@ Skill -> MCP client -> STDIO MCP adapter -> DrawingGraphQAService
 - `scripts/enrich_block_relations.py` 作为兼容入口名称保留，只负责离线派生关系增强的命令行参数、配置加载、增强范围创建和服务调用，不包含匹配规则或 Cypher 细节，也不自动运行 AI 候选复核。
 - `scripts/review_candidate_relations.py` 是候选关系 AI 复核的显式入口，只通过注入客户端和服务接口处理 `accepted`、`rejected`、`unresolved` 三态结果。
 - QA 层依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`（CLI、HTTP 与 MCP adapter 同级）；QAService 不创建 Neo4j driver、不写 Cypher、不读取环境变量，adapter 只在最外层管理 driver 生命周期。
-- 产品层通用检索只经 `DrawingGraphToolFacade` 白名单只读方法，默认只读、`write_back=false`，不调用 Qwen、不创建 RecognitionRun、不写 Neo4j；候选关系不是正式事实；01 问题理解闭环（`QuestionUnderstandingService`）已实现，问题理解模块不访问 Neo4j、不调用 facade、不调用真实文本模型；完整 `DrawingAssistantService` 与外部产品级 CLI/HTTP/MCP 入口当前未实现。
+- 产品公共合同与通用检索闭环只经 `DrawingGraphToolFacade` 白名单只读方法；01 问题理解、03 语义缺口决策、04 多模态识别执行、05 证据融合、06 答案生成、07 只读总编排/追溯和 08 反馈已实现。产品级只读 CLI/HTTP/MCP 只暴露问答；追溯通过可选 `TraceabilityService` 写产品运行审计 store，反馈通过独立 `FeedbackService` 写 feedback store/审计，只有 `request_review` 且权限与候选条件满足时才进入 `CandidateReviewService`。默认 `write_back=false`；07 拒绝问答写回授权，调用 04 时固定 `write_back=false`，调用 05 时固定 `write_back_policy=None`；`confirm/reject/correct` 不改变 `fact_kind`，候选关系不是正式事实。外部产品级 Web UI 与反馈入口、外部持久化 store 与多用户账号集成仍未实现。
 - 业务逻辑集中在 `src/drawing_graph/`，按扫描、校验、规范化、映射、持久化、审计、查询和关系增强拆分。
 - Schema 初始化和数据导入分离，导入过程不隐式修改数据库结构。
 - Neo4j 写入使用稳定业务 ID、固定标签/关系白名单和参数化 Cypher。
@@ -395,7 +409,7 @@ JSON 文件
 | `src/drawing_graph/assistant_recognition_budget.py` | 可注入成本/时延估算 profile，执行 `allow_recognition`、max targets、预算、时延硬门控并输出 selected/deferred。 |
 | `src/drawing_graph/assistant_semantic_gap_decision.py` | `SemanticGapDecisionService.decide()`：校验→充分性→freshness/cache→目标规划→预算门控→最终 `SemanticGapDecision`。 |
 
-数据流位于检索之后、语义识别执行之前：`QuestionUnderstandingResult + RetrievalBundle + RecognitionPolicy -> EvidenceSufficiencyEvaluator -> EvidenceFreshnessEvaluator -> RecognitionTargetPlanner -> RecognitionBudgetEvaluator -> SemanticGapDecision`。03 模块是纯决策层：不调用模型、不写缓存、不写 Neo4j、不创建 RecognitionRun；`write_back_recommendation` 只是建议，不能提升授权。`DrawingGraphToolFacade.recognize_semantic_targets()` 与 `SemanticRecognitionService.recognize_targets()` 为后续执行衔接预留，执行前按同一 cache key 二次校验，缓存命中不调用供应商、不创建持久化 run log。完整 `DrawingAssistantService`、证据融合、答案生成、反馈状态机与产品级 adapter 仍属后续范围。
+数据流位于检索之后、语义识别执行之前：`QuestionUnderstandingResult + RetrievalBundle + RecognitionPolicy -> EvidenceSufficiencyEvaluator -> EvidenceFreshnessEvaluator -> RecognitionTargetPlanner -> RecognitionBudgetEvaluator -> SemanticGapDecision`。03 模块是纯决策层：不调用模型、不写缓存、不写 Neo4j、不创建 RecognitionRun；`write_back_recommendation` 只是建议，不能提升授权。执行衔接已由 `DrawingGraphToolFacade.recognize_semantic_targets()`、`SemanticRecognitionService.recognize_targets()` 与 04 `MultimodalRecognitionExecutionService` 落地：执行前按同一 cache key 二次校验，缓存命中不调用供应商、不创建 attempt 或持久化 run log；cache miss 才进入 04 执行流水线。04 的结果可与 `RetrievalBundle`、`SemanticGapDecision` 一起交给 05 `EvidenceFusionService`，生成供 06 `AnswerGenerationService` 消费的 `EvidenceBundle`；07 `DrawingAssistantService` 已负责把 01—06 串成只读产品链路，并可选记录 trace。08 `FeedbackService` 是独立的产品内部反馈链路，不反向修改问答链路。外部产品级 Web UI 与反馈入口、外部持久化 store 与多用户账号集成仍属后续范围。
 
 ## 6. 测试结构
 
@@ -460,6 +474,10 @@ JSON 文件
 | `tests/test_assistant_semantic_gap_boundaries.py` | 03 模块静态边界：禁止执行后端导入与写操作。 |
 | `tests/test_assistant_semantic_gap_docs.py` | 语义缺口决策闭环文档合同测试。 |
 | `tests/test_assistant_semantic_gap_factory.py` | 决策服务工厂装配与 fake 输入运行。 |
+| `tests/test_assistant_trace_*.py` | 追溯 DTO、store、构造、claim 投影、服务与静态安全边界。 |
+| `tests/test_assistant_feedback_*.py` | 反馈 DTO、append-only store、权限、状态机、服务、审计与静态安全边界。 |
+| `tests/test_assistant_candidate_review_adapter.py` | `request_review` 到既有候选审核服务的受控适配。 |
+| `tests/test_drawing_assistant_*.py` | 只读总编排、可选追溯接入、factory、CLI 与端到端兼容。 |
 | `tests/integration/test_neo4j_import.py` | 真实 Neo4j 中的 Schema、导入、幂等和查询闭环。 |
 | `tests/integration/test_neo4j_relation_enrichment.py` | 真实 Neo4j 中的离线补关系、查询和幂等验证。 |
 | `tests/integration/test_neo4j_semantic_evidence.py` | 真实 Neo4j 中的语义证据节点、语义关系、断面候选/正式关系、幂等和查询投影验证。 |
@@ -483,7 +501,7 @@ JSON 文件
 - 不让离线派生关系增强默认触发候选关系 AI 复核；复核必须通过显式命令或服务调用执行。
 - 不把 `CANDIDATE_*` 候选关系当作正式事实；只有 accepted 且通过硬性规则校验的候选才能提升为正式关系。
 - QA 编排默认只读、`write_back=false`；候选关系不是正式事实，`matched_candidate` 不写成正式图谱关系；QAService 不直接写 Cypher。HTTP API 默认 loopback、单 worker，`/health/live` 与 `/health/ready` 不等于 live Neo4j 验证；本地只读 MCP adapter 已实现；当前已有可选 Qwen/DashScope 多模态客户端，但不默认调用，live DashScope 验证需单独执行；远程 MCP、Streamable HTTP MCP、OAuth、RBAC、TLS、多 worker、Ava 专有 adapter、OCR、数据库 schema 变更、HTTP 写回与 plugin 发布仍未实现。
-- 产品公共合同与通用检索闭环（`src/drawing_graph/assistant_*.py`）默认只读、`write_back=false`；不调用 Qwen、不创建 RecognitionRun、不写 Neo4j；候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系。完整 `DrawingAssistantService`、外部产品级 CLI/HTTP/MCP 入口与产品级写回尚未实现；未配置 live 环境导致集成测试 skipped 时，跳过不等于 live Neo4j 通过。
+- 产品公共合同、通用检索闭环、06 答案生成与 07 只读总编排（`src/drawing_graph/assistant_*.py`、`src/drawing_graph/drawing_assistant_*.py`）默认只读、`write_back=false`；不默认调用 Qwen、不创建非授权 RecognitionRun、不写 Neo4j；候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系。产品级只读 CLI/HTTP/MCP、可选 trace store 和内部 feedback store/审计已实现；外部产品级 Web UI 与反馈入口、外部持久化 store、多用户账号集成和产品级业务写回尚未实现；未配置 live 环境导致集成测试 skipped 时，跳过不等于 live Neo4j 通过。
 - 语义缺口决策模块（产品实现层 03）只做确定性判断与目标规划：不调用模型、不写缓存、不写 Neo4j、不创建 RecognitionRun、不提升候选关系；`write_back_recommendation` 不能修改授权。live DashScope 与 live Neo4j 均未验证，单元/fake 通过不等于 live 通过。
 
 这些边界使当前阶段聚焦在可重复导入、稳定 ID、图谱层级、位置证据、离线可审计关系增强和查询追溯闭环上。
@@ -507,7 +525,7 @@ JSON 文件
 
 ## 04 多模态识别执行层（已实现，离线验证）
 
-产品实现层 04 已实现供应商无关、同步优先的多模态识别执行流水线：
+`changes/产品实现层/多模态识别产品化/tasks.md` 的 Task 1-43 已全部实现。产品实现层 04 形成供应商无关、同步优先的多模态识别执行流水线：
 
 - 新增模块：`recognition_models.py`、`recognition_tasks.py`、`recognition_input_validation.py`、`recognition_image_preprocessing.py`、`recognition_prompting.py`、`recognition_output_validation.py`、`recognition_retry.py`、`recognition_metrics.py`、`recognition_redaction.py`、`recognition_attempt_log.py`、`recognition_execution.py`。
 - 七类任务：`page_summary`、`element_text_observation`、`block_semantic_identification`、`basic_info_interpretation`、`table_interpretation`、`section_label_observation`、`relation_evidence_extraction`。
@@ -517,4 +535,45 @@ JSON 文件
 - 统一 fail-closed 脱敏与图谱外 append-only attempt log。
 - `MultimodalRecognitionExecutionService` 是 04 唯一执行编排入口；`SemanticRecognitionService` 负责缓存、执行兼容分组、语义 DTO 投影与受控写回；Factory 装配完整流水线，默认 Fake provider，仅显式 qwen 配置才创建 Qwen adapter。
 - 边界不变：默认 `write_back=false`；`RecognitionRun`/`RecognitionAttempt` 图谱外；`TextObservation` 与三类 `Interpretation` 图谱内；relation 输出只能为 `candidate_relation`，候选不等于正式事实；不引入 OCR；不改变 Neo4j 来源事实 schema。
-- 验证分层：离线合同/单元测试（全量 1808 通过、4 跳过）属于离线验证；live DashScope、黄金集、live Neo4j、Codex/MCP 均未声称通过。
+- 验证分层：专项入口覆盖文档合同、cache hit、局部 bbox、retry/attempt、usage/cost/latency、脱敏、dry-run 零持久化及 facade/service/Qwen 兼容回归。2026-08-13 当前快照为专项 73 项通过；完整回归运行 1823 项，4 项 live Neo4j 集成测试因缺少测试环境变量而跳过，其余通过。该结果属于离线/fake 验证；live DashScope、黄金集、live Neo4j、Codex/MCP 均未声称通过，本次文档同步也未执行这些 live 验证。
+
+## 05 证据融合与缓存闭环（已实现，离线验证）
+
+`changes/产品实现层/证据融合与缓存闭环/tasks.md` 的 Task 1-56 已全部实现。产品实现层 05 形成位于 04 之后、06 之前的独立、确定性、默认只读的证据融合与缓存闭环：
+
+- 新增纯模块：`assistant_evidence_fusion_models.py`（05 合同）、`assistant_recognition_projection.py`（识别结果投影）、`assistant_evidence_normalization.py`（规范化/四类 key/能力）、`assistant_evidence_deduplication.py`（去重）、`assistant_evidence_rules.py`（03/05 共用门控）、`assistant_evidence_lineage.py`（stale/supersede）、`assistant_evidence_conflicts.py`（冲突矩阵）、`assistant_claim_support.py`（claim 支撑）、`assistant_answerability.py`（answerability）、`assistant_cache_closure.py`（缓存汇总）、`assistant_semantic_write_back.py`（受控写回门控与状态机）、`assistant_evidence_fusion.py`（唯一编排入口）、`assistant_evidence_fusion_factory.py`（无副作用工厂）。
+- 关键区分：`cache_key` 只用于精确复用；`evidence_family_key` 只用于 lineage/stale；`comparison_key` 只用于可比证据分组；`content_fingerprint` 只用于确定性去重。
+- 固定流水线：校验 -> 收集 -> 投影 -> 规范化 -> 去重 -> lineage -> 冲突 -> claim 支撑 -> answerability -> 可选受控写回 -> `EvidenceBundle`。
+- 边界：默认 `write_back=false`；dry-run 零持久化，仅请求内 `RequestSemanticMemo`；persistent cache 仅在受控写回授权通过后提交；`candidate` 不等于 formal，融合/置信度/写回授权均不提升 `fact_kind`；05 不调用模型、不查询 Neo4j、不执行 Cypher、不新增外部 API；06/07 已消费 05 的 `EvidenceBundle` 完成答案生成与只读总编排，但不新增 schema、不写回、不提升候选关系。产品级 HTTP/MCP 问答 adapter 由“产品级 HTTP/MCP adapter”一节独立实现。
+- 验证：`python -m unittest tests.test_assistant_evidence_fusion_models tests.test_assistant_recognition_projection tests.test_assistant_evidence_normalization tests.test_assistant_evidence_deduplication tests.test_assistant_evidence_rules tests.test_assistant_evidence_lineage tests.test_assistant_evidence_conflicts tests.test_assistant_claim_support tests.test_assistant_answerability tests.test_assistant_cache_closure tests.test_assistant_semantic_write_back tests.test_assistant_evidence_fusion tests.test_assistant_evidence_fusion_factory tests.test_assistant_evidence_fusion_boundaries tests.test_assistant_evidence_fusion_docs -v`。2026-08-14 的 05 快照为专项 280 项运行，0 失败、0 错误、0 跳过；当时完整离线回归 2150 项运行，0 失败、0 错误、4 项 live Neo4j 集成测试因缺少测试环境变量而跳过。06/07 完成后的产品答案与只读总编排验证见下一节。以上属于离线/fake、合同与静态边界验证；live Neo4j、live DashScope、黄金集和真实文本 provider 均未验证。
+
+## 06 答案生成与 07 只读总编排（已实现，离线验证）
+
+`changes/产品实现层/答案生成与只读总编排MVP/tasks.md` 的 Task 1-65 已实现。产品级只读链路为：
+
+`Product CLI (scripts/drawing_assistant.py) -> DrawingAssistantService (07) -> QuestionUnderstandingService(01) / GraphRetrievalService(02) / SemanticGapDecisionService(03) / DrawingGraphToolFacade.recognize_semantic_targets(04, write_back=false) / EvidenceFusionService(05, 无写回 policy) / AnswerGenerationService(06) -> AnswerPackage`。
+
+- 06 确定性内核：`ClaimBuilder`/`CitationBuilder`/`AnswerStatusResolver`/`MachineAnswerBuilder`/`CanonicalAnswerSerializer`/`AnswerPackageValidator`/`ChineseAnswerTemplateRenderer`/`ConstrainedTextValidator`。`machine_answer`、claims、citations、status 是权威输出；受约束文本生成只是表现层，失败回退中文模板。
+- 07 只读总编排：入口首行拒绝 `allow_write_back=true`；澄清/unsupported 早停；多意图逐子请求串行；识别目标按 `page_id` 分组、每页一次 facade 且固定 `write_back=false`；05 固定 `write_back_policy=None`；`AnswerPackageAggregator` 按 design 6.3 优先级聚合整体状态。
+- 新增模块：`assistant_claim_builder.py`、`assistant_citation_builder.py`、`assistant_answer_generation.py`、`assistant_answer_templates.py`、`assistant_answer_text.py`、`drawing_assistant_service.py`、`drawing_assistant_factory.py`、`scripts/drawing_assistant.py`。
+- 边界不变：现有 QA CLI/HTTP/MCP 链路保持独立，产品 CLI 是同级 adapter，不替换也不反向依赖它们；无 schema/写回扩张；candidate/interpretation 不被提升为 formal/source fact；非诊断 claim 必须有 citation。
+- 验证分层：2026-08-14 完整离线回归 `python -m unittest discover tests -v` 运行 2428 项，0 失败、0 错误、4 项因缺少 live Neo4j 测试环境变量而跳过。以上仅证明离线/fake、合同与静态边界；live Neo4j、live DashScope、真实文本 provider 均未验证，未写成已完成。
+
+## 07 追溯闭环（已实现，离线验证）
+
+`changes/产品实现层/追溯与反馈闭环/tasks.md` 的第 7 次追溯闭环已实现。产品运行审计层新增追溯能力，位于 `DrawingAssistantService` 外侧，只写产品运行审计 store，不写 Neo4j 业务图谱：
+
+- 新增模块：`assistant_trace_models.py`（追溯 DTO：模块事件、成本/时延摘要、富版 `TraceRecord`、`TraceWriteResult`、`ClaimTrace`、`TraceQueryResult`）、`assistant_trace_store.py`（`TraceStorePort` 与内存实现）、`assistant_trace_builder.py`（从 01—06 中间产物与 `AnswerPackage` 构造 `TraceRecord`，数据最小化）、`assistant_claim_trace.py`（claim 到 evidence/citation/run 的只读投影）、`assistant_traceability_service.py`（记录与回查入口）。
+- 可选接入：`DrawingAssistantService` 构造注入 `traceability_service=None`，`answer()` 生成答案后尝试记录 trace；`drawing_assistant_factory.create_drawing_assistant_service(..., traceability_service=None, trace_store=None)` 可选装配。未注入时默认行为不变。
+- 边界：trace 只写 `TraceStorePort`，不新增 Neo4j schema，不写业务事实，不把 `candidate_relation`/`matched_candidate` 写成 `formal_relation`；trace 存储失败不把答案本身标记为失败；输出脱敏，不含 secret、Neo4j URI、Cypher、绝对路径、完整 payload、完整 prompt 或 traceback。
+- 本节只描述追溯职责；第 8 次反馈状态机、权限、审计与 `CandidateReviewService` 受控对接已在下一节独立实现，外部产品级反馈 API 仍未实现。
+
+验证分层：追溯专项测试（`tests/test_assistant_trace_models`、`test_assistant_trace_store`、`test_assistant_trace_builder`、`test_assistant_claim_trace`、`test_assistant_traceability_service`、`test_assistant_trace_boundaries` 以及 `test_drawing_assistant_service`/`test_drawing_assistant_factory` 兼容回归）均为离线/fake 验证；live Neo4j 未验证。
+
+## 08 反馈闭环（已实现，离线验证）
+
+`changes/产品实现层/追溯与反馈闭环/tasks.md` 的第 8 次反馈闭环已实现。反馈模块位于 trace 模块外侧，只写反馈 store 与审计事件，仅在 `request_review` 且权限允许时受控调用注入的 `CandidateReviewService`：
+
+- 新增模块：`assistant_feedback_models.py`、`assistant_feedback_store.py`、`assistant_feedback_permissions.py`、`assistant_feedback_state_machine.py`、`assistant_candidate_review_adapter.py`、`assistant_feedback_service.py`。
+- 边界：`confirm/reject/correct` 只记录反馈与审计，不产生正式事实、不改变 `fact_kind`；`correct` 只形成反馈事件或待审核新证据请求；`request_review` 只经注入的 `CandidateReviewService.review_candidate_group()`，候选集合不完整、跨页、方向不明或缺 evidence refs 时进入 unresolved/invalid；默认 `write_back=false`，权限不足 fail closed；不新增 Neo4j schema，用户反馈不会直接覆盖来源事实、语义证据、候选关系或正式关系。
+- 未实现：外部产品级 Web UI 与反馈入口、外部持久化 trace/feedback store、真实多用户账号集成、反馈驱动自动再训练。2026-08-17 追溯与反馈专项验收快照中，专项合并回归运行 107 项且全部通过，详见 `docs/acceptance/TRACE_FEEDBACK_ACCEPTANCE.md`；后续产品 adapter 验收已补齐当时过期的根文档契约断言，并记录全仓离线回归 2717 项 `OK (skipped=5)`。live Neo4j、live DashScope 与真实文本 provider 均未验证。

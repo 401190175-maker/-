@@ -179,6 +179,7 @@ class RecognitionTargetLocationTests(unittest.TestCase):
         requirement = make_requirement(
             "req:block",
             scope=AssistantScope(page_id=PAGE_ID, block_id=BLOCK_ID),
+            evidence_type=EvidenceType.STRUCTURED_INTERPRETATIONS,
         )
         assessment = make_assessment("req:block")
         bundle = RetrievalBundle(
@@ -195,6 +196,29 @@ class RecognitionTargetLocationTests(unittest.TestCase):
         self.assertEqual(RecognitionTargetStatus.SELECTED, target.status)
         self.assertEqual(BLOCK_ID, target.target_element_id)
         self.assertEqual(BLOCK_BBOX, dict(target.bbox))
+        self.assertEqual("block_semantic_identification", target.task_type)
+
+    def test_block_dry_run_target_allows_page_hash_to_be_computed_later(self):
+        requirement = make_requirement(
+            "req:block:nohash",
+            scope=AssistantScope(page_id=PAGE_ID, block_id=BLOCK_ID),
+            evidence_type=EvidenceType.STRUCTURED_INTERPRETATIONS,
+        )
+        assessment = make_assessment("req:block:nohash")
+        bundle = RetrievalBundle(
+            request_id="req:1",
+            source_facts=(block_trace_fact(), page_source_fact(image_hash=None)),
+        )
+        targets = self.plan(
+            (assessment,),
+            bundle,
+            {requirement.requirement_id: requirement},
+        )
+        self.assertEqual(1, len(targets))
+        target = targets[0]
+        self.assertEqual(RecognitionTargetStatus.SELECTED, target.status)
+        self.assertEqual(BLOCK_ID, target.target_element_id)
+        self.assertIsNone(target.cache_key)
 
     def test_missing_location_never_produces_selected_target(self):
         requirement = make_requirement("req:nolocation")
@@ -354,7 +378,7 @@ class RecognitionTargetGenerationTests(unittest.TestCase):
             bundle,
             {requirement.requirement_id: requirement},
         )[0]
-        self.assertEqual("text_observation", target.task_type)
+        self.assertEqual("element_text_observation", target.task_type)
         self.assertEqual(("observation",), target.required_outputs)
         self.assertEqual(("req:carry",), target.covered_requirement_ids)
         self.assertEqual((ReasonCode.EVIDENCE_MISSING,), target.reason_codes)
@@ -432,7 +456,7 @@ class RecognitionTargetMergeOrderTests(unittest.TestCase):
         )
         self.assertEqual(2, len(targets))
         self.assertEqual(
-            {"text_observation", "structured_interpretation"},
+            {"element_text_observation", "block_semantic_identification"},
             {target.task_type for target in targets},
         )
 
@@ -515,11 +539,13 @@ class RecognitionTargetBlockedTests(unittest.TestCase):
         self.assert_blocked_with(targets, ReasonCode.TARGET_LOCATION_MISSING)
         self.assertEqual((), tuple(t for t in targets if t.status is RecognitionTargetStatus.SELECTED))
 
-    def test_missing_image_hash_blocks_target(self):
+    def test_missing_image_hash_selects_target_without_cache_key(self):
         targets = self.plan_with(
             (element_source_fact(image_hash=None),),
         )
-        self.assert_blocked_with(targets, ReasonCode.TARGET_LOCATION_MISSING)
+        self.assertEqual(1, len(targets))
+        self.assertEqual(RecognitionTargetStatus.SELECTED, targets[0].status)
+        self.assertIsNone(targets[0].cache_key)
 
     def test_missing_bbox_blocks_target(self):
         targets = self.plan_with(

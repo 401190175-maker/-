@@ -186,7 +186,7 @@ class SemanticServiceDryRunTest(unittest.TestCase):
         self.assertEqual([], service.run_log.calls)
         self.assertEqual([], service.semantic_repository.calls)
 
-    def test_dry_run_reuses_valid_cache_without_calling_execution_twice(self):
+    def test_dry_run_does_not_persist_to_cross_request_cache(self):
         stub = StubExecutionService(
             results=(RecognitionExecutionResult(recognition_run_id="run:temp:1", status="succeeded", validated_outputs=(observation_output(),)),)
         )
@@ -198,9 +198,20 @@ class SemanticServiceDryRunTest(unittest.TestCase):
         second = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
 
         self.assertFalse(second.persisted)
-        self.assertEqual(1, len(stub.calls))
-        self.assertEqual("block:1", second.observations[0].target_element_id)
-        self.assertEqual(first.observations[0].cache_key, second.observations[0].cache_key)
+        self.assertEqual(2, len(stub.calls))
+        self.assertEqual("block:1", first.observations[0].target_element_id)
+
+    def test_dry_run_allows_read_only_cache_lookup(self):
+        cache = InMemorySemanticCacheService()
+        cache.put(expected_cache_key(), (cached_observation(),))
+        stub = StubExecutionService()
+        service = self._service(stub, cache=cache, input_builder=RecordingInputBuilder())
+
+        result = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
+
+        self.assertEqual([], stub.calls)
+        self.assertFalse(result.persisted)
+        self.assertEqual("obs:cached:block:1", result.observations[0].observation_id)
 
     def test_dry_run_cache_hit_never_calls_execution_or_writes(self):
         cache = InMemorySemanticCacheService()
@@ -215,6 +226,57 @@ class SemanticServiceDryRunTest(unittest.TestCase):
         self.assertEqual("obs:cached:block:1", result.observations[0].observation_id)
         self.assertEqual([], service.run_log.calls)
         self.assertEqual([], service.semantic_repository.calls)
+
+
+class SemanticWriteBatchTests(unittest.TestCase):
+    def _service(self, stub):
+        return SemanticRecognitionService(
+            client=None,
+            run_log=SpyRepository(),
+            semantic_repository=SpyRepository(),
+            input_builder=RecordingInputBuilder(),
+            execution_service=stub,
+        )
+
+    def test_dry_run_produces_write_batch_without_persistence(self):
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:temp:1",
+                    status="succeeded",
+                    validated_outputs=(observation_output(),),
+                ),
+            )
+        )
+        service = self._service(stub)
+        result = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
+
+        self.assertFalse(result.persisted)
+        self.assertIsNotNone(result.write_batch)
+        batch = result.write_batch
+        self.assertTrue(batch.recognition_run_id.startswith("run:temp:"))
+        self.assertTrue(batch.schema_valid)
+        self.assertTrue(batch.scope_valid)
+        self.assertTrue(batch.payload_sanitized)
+        self.assertTrue(batch.audit_material_complete)
+        self.assertEqual(1, len(batch.observations))
+        self.assertIsNotNone(batch.sanitized_payload_envelope)
+        self.assertEqual([], service.run_log.calls)
+        self.assertEqual([], service.semantic_repository.calls)
+
+    def test_write_batch_uses_stable_run_id(self):
+        stub = StubExecutionService(
+            results=(
+                RecognitionExecutionResult(
+                    recognition_run_id="run:temp:1",
+                    status="succeeded",
+                    validated_outputs=(observation_output(),),
+                ),
+            )
+        )
+        service = self._service(stub)
+        result = service.recognize_page(page_facts(), ("DrawingBlock",), "default", "p1")
+        self.assertEqual(result.recognition_run_id, result.write_batch.recognition_run_id)
 
 
 if __name__ == "__main__":

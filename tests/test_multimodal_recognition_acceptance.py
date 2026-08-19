@@ -106,7 +106,7 @@ def _build(script):
         attempt_log=attempt_log,
         execution_policy=_policy(),
     )
-    return service, client, run_log, attempt_log, payload_store, repository
+    return service, client, run_log, attempt_log, payload_store, repository, cache
 
 
 class MultimodalRecognitionAcceptanceTests(unittest.TestCase):
@@ -116,7 +116,7 @@ class MultimodalRecognitionAcceptanceTests(unittest.TestCase):
         with _fixture_dir() as tmp:
             source = Path(tmp) / "page-1.png"
             _write_png(source)
-            service, client, run_log, attempt_log, payload_store, repository = _build(
+            service, client, run_log, attempt_log, payload_store, repository, cache = _build(
                 (("http_429", None), _payload())
             )
 
@@ -145,6 +145,10 @@ class MultimodalRecognitionAcceptanceTests(unittest.TestCase):
                 {"summary": "ok", "api_key": "secret"}
             )
             self.assertEqual("<redacted>", redacted["api_key"])
+
+            for evidence in (*first.observations, *first.interpretations):
+                if evidence.cache_key:
+                    cache.put(evidence.cache_key, (evidence,))
 
             second = service.recognize_targets(
                 _facts(str(source)),

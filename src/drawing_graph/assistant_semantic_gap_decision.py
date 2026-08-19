@@ -165,6 +165,15 @@ class SemanticGapDecisionService:
                 f"{retrieval_bundle.request_id!r}"
             )
         if (
+            question_result.subrequest_id is not None
+            and question_result.subrequest_id != retrieval_bundle.subrequest_id
+        ):
+            raise ValueError(
+                "subrequest_id mismatch: "
+                f"question_result={question_result.subrequest_id!r} != "
+                f"retrieval_bundle={retrieval_bundle.subrequest_id!r}"
+            )
+        if (
             retrieval_bundle.subrequest_id is not None
             and question_result.subrequests
         ):

@@ -123,5 +123,84 @@ class ReadmeMcpTest(unittest.TestCase):
                 self.assertIn(phrase, self.readme)
 
 
+class ReadmeAnswerGenerationTest(unittest.TestCase):
+    """README must document the product read-only CLI and its boundaries."""
+
+    def setUp(self):
+        self.readme = README_PATH.read_text(encoding="utf-8")
+
+    def test_documents_cli_entry_and_parameters(self):
+        for phrase in (
+            "scripts/drawing_assistant.py",
+            "--allow-recognition",
+            "--no-recognition",
+            "--text-generation",
+            "--output json|text",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+    def test_documents_output_and_exit_codes(self):
+        for phrase in (
+            '"ok": true',
+            "answer_contract_version",
+            "machine_answer",
+            "text_answer",
+            "退出码",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+    def test_documents_readonly_and_verification_boundaries(self):
+        for phrase in (
+            "write_back=false",
+            "不提供 `--write-back` 参数",
+            "live Neo4j",
+            "均未验证",
+            "回退模板",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+    def test_cli_example_has_no_secret(self):
+        self.assertNotIn("password=", self.readme.split("答案生成与只读总编排")[1])
+
+
+class ReadmeProductAdapterTest(unittest.TestCase):
+    """README must document the product HTTP/MCP adapter and its boundaries."""
+
+    def setUp(self):
+        self.readme = README_PATH.read_text(encoding="utf-8")
+
+    def test_documents_product_http_and_mcp_adapters(self):
+        for phrase in (
+            "assistant_http.py",
+            "assistant_mcp_server.py",
+            "serve_drawing_assistant.py",
+            "serve_drawing_assistant_mcp.py",
+            "ask_drawing_assistant",
+            "/api/v1/drawing-assistant/ask",
+            "DRAWING_GRAPH_ASSISTANT_HTTP_",
+            "DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL",
+            "DrawingAssistantService.answer()",
+            "PRODUCT_ADAPTER_ACCEPTANCE.md",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+    def test_documents_readonly_and_verification_boundaries(self):
+        for phrase in (
+            "write_back=false",
+            "候选关系不是正式事实",
+            "live Neo4j",
+            "live DashScope",
+            "真实文本 provider",
+            "均未验证",
+            "skipped live 测试不等于 live 通过",
+        ):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, self.readme)
+
+
 if __name__ == "__main__":
     unittest.main()

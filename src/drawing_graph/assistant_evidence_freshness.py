@@ -109,6 +109,26 @@ class EvidenceFreshnessEvaluator:
             )
         return tuple(updated)
 
+    def evaluate_evidence(
+        self,
+        items: Sequence[EvidenceItem],
+        recognition_policy: RecognitionPolicy,
+        retrieval_bundle: RetrievalBundle,
+        requirement: EvidenceRequirement | None = None,
+    ) -> tuple[FreshnessResult, ...]:
+        """按任意证据集合评估 freshness，供 05 复用 03 的 freshness 维度规则。
+
+        只读 helper：复用现有 image/bbox/model/prompt/preprocessing/
+        normalization/contract 维度规则，缺关键元数据时返回 unknown（
+        ``is_current=False``），不默认 current，不执行 cache get/put、
+        模型调用或持久化。
+        """
+
+        return tuple(
+            self._freshness_for_item(item, requirement, recognition_policy, retrieval_bundle)
+            for item in items
+        )
+
     def cache_candidates(
         self,
         assessments: tuple[RequirementAssessment, ...],

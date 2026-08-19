@@ -2,7 +2,7 @@
 
 本文记录当前代码已经落地的模块职责、新接口、新依赖、数据变化和架构变化。它只描述当前 Python 应用层实现和薄 CLI/HTTP/MCP adapter，不把未实现的 OCR、Ava 专有 adapter 或全量自动语义扫描写成已完成能力；HTTP API 与本地只读 MCP adapter 已实现并记录于本文件。
 
-单页端到端 CLI 验收证据记录在 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`；333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收证据记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`；面向使用者的最短运行流程记录在 `docs/acceptance/USER_RUNBOOK.md`。
+单页端到端 CLI 验收证据记录在 `docs/acceptance/E2E_CLI_ACCEPTANCE.md`；333 页全量数据导入、离线派生关系增强、Neo4j 计数、CLI 抽样和 live Neo4j 回归验收证据记录在 `docs/acceptance/FULL_DATA_ACCEPTANCE.md`；答案生成与只读总编排验收记录在 `docs/acceptance/ANSWER_GENERATION_MVP_ACCEPTANCE.md`；追溯与反馈专项验收记录在 `docs/acceptance/TRACE_FEEDBACK_ACCEPTANCE.md`；产品 adapter 验收记录在 `docs/acceptance/PRODUCT_ADAPTER_ACCEPTANCE.md`；面向使用者的最短运行流程记录在 `docs/acceptance/USER_RUNBOOK.md`。
 
 ## 1. 新模块职责
 
@@ -62,6 +62,19 @@
 - `src/drawing_graph/assistant_recognition_target_planner.py`：`RecognitionTargetPlanner.plan()` 从 `RetrievalBundle` 来源事实定位并生成最小 `RecognitionTarget`，支持合并去重、稳定排序与缺定位 blocked。
 - `src/drawing_graph/assistant_recognition_budget.py`：`RecognitionCostProfile`/`RecognitionEstimator` 提供保守估算，`RecognitionBudgetEvaluator.evaluate()` 执行授权、max targets、预算与时延硬门控。
 - `src/drawing_graph/assistant_semantic_gap_decision.py`：`SemanticGapDecisionService.decide()` 校验输入并编排充分性、freshness/cache、目标规划与预算门控，输出唯一 `SemanticGapDecision`。
+- `src/drawing_graph/assistant_trace_models.py`、`assistant_trace_store.py`、`assistant_trace_builder.py`、`assistant_claim_trace.py`、`assistant_traceability_service.py`：定义产品运行追溯 DTO、内存 store port、`TraceRecord` 构造、claim 追溯投影及记录/回查服务；trace 只进入 `TraceStorePort`，不进入 Neo4j 业务图谱。
+- `src/drawing_graph/assistant_feedback_models.py`、`assistant_feedback_store.py`、`assistant_feedback_permissions.py`、`assistant_feedback_state_machine.py`、`assistant_feedback_service.py`：定义反馈 DTO、append-only 内存 store、fail-closed 权限、状态迁移、审计和反馈服务；`confirm/reject/correct` 只记录反馈与审计。
+- `src/drawing_graph/assistant_candidate_review_adapter.py`：只把满足权限、候选完整性、同页、方向和 evidence refs 要求的 `request_review` 转交注入的 `CandidateReviewService.review_candidate_group()`；不直接访问 repository、driver 或 Cypher。
+- `src/drawing_graph/assistant_adapter_serialization.py`：产品 adapter 共享 envelope、`AnswerPackage` JSON-safe 投影、稳定错误类别与脱敏；复用 `qa_serialization.to_jsonable`/`sanitize_error_message`，不依赖 FastAPI/Pydantic/MCP/Neo4j/Qwen。
+- `src/drawing_graph/assistant_http_models.py`：产品 HTTP request/response/health DTO，严格字段白名单，转换为只读 `AssistantRequest`（固定 `allow_write_back=False`）。
+- `src/drawing_graph/assistant_http_runtime.py`：产品 HTTP driver -> facade -> `DrawingAssistantService` 装配与幂等关闭；只有 runtime 与启动脚本知道 Neo4j driver。
+- `src/drawing_graph/assistant_http.py`：产品 HTTP FastAPI 应用工厂 `create_app(config, runtime_factory)`；路由 `POST /api/v1/drawing-assistant/ask`、`/health/live`、`/health/ready`，含并发上限、请求超时、请求体限制、认证与稳定错误映射；模块 import 无副作用。
+- `scripts/serve_drawing_assistant.py`：产品 HTTP 单 worker Uvicorn 启动入口，只从环境变量读取 `AssistantHttpConfig`；不接受密码、token 或 API key 命令行参数。
+- `src/drawing_graph/assistant_mcp_models.py`：产品 MCP 输入输出模型，转换为只读 `AssistantRequest`；只接受 question/request_id/language/scope_hint/allow_recognition/answer_format，拒绝写回/Cypher/凭据/路径/底层对象。
+- `src/drawing_graph/assistant_mcp_tools.py`：`DrawingAssistantMCPTools(service)` 与只读 `ask_drawing_assistant` handler，只调用一次 `DrawingAssistantService.answer()`，生成同源 structuredContent 与 TextContent。
+- `src/drawing_graph/assistant_mcp_runtime.py`：`AssistantMcpRuntime` 与 `create_assistant_mcp_runtime(config, ...)`，管理 driver -> facade -> `DrawingAssistantService` 装配、失败清理与幂等关闭；支持 fake factory 注入。
+- `src/drawing_graph/assistant_mcp_server.py`：无 import 副作用的 `create_mcp_server(tools)`，配置 `drawing-assistant` server instructions、只读工具 Schema 与只读 annotations；只提供 Tools capability。
+- `scripts/serve_drawing_assistant_mcp.py`：产品 MCP 本地 STDIO 唯一进程入口；`main()` 加载 `AssistantMcpConfig`、装配 runtime/tools/server、运行官方 STDIO transport；stdout 只承载协议帧，不接受 host/port/token/write-back 参数。
 
 既有模块仍保持原职责：`src/drawing_graph/block_relation_enrichment.py` 负责离线派生关系计算，`src/drawing_graph/relation_repository.py` 负责受控关系写入、候选提升、候选关系读取、断面匹配读取和 `RelationRepositorySectionMatchPort` 适配，`src/drawing_graph/relation_service.py` 负责编排显式离线增强，`src/drawing_graph/candidate_review.py` 保留 `CandidateReviewService.review_candidate_group`、三态审核和硬规则。`scripts/review_candidate_relations.py` 仍是显式候选关系 AI 复核 CLI 入口；复核记录使用 `review_run_id` 回查一次复核运行。
 
@@ -90,6 +103,8 @@
 - `GET /health/live` 与 `GET /health/ready`：健康检查；ready 在 runtime 已装配时返回 `neo4j_status="not_checked"`，未装配返回 503。
 - `RelationRepository.update_candidate_review` 与 `RelationRepository.promote_candidate_relation` 仍是底层受控写回接口，不由 Tool adapter 直接调用。
 - `QAMcpConfig`（`src/drawing_graph/config.py`）：MCP 专用不可变配置，只包含 `neo4j_uri`、`neo4j_user`、`neo4j_password` 和 `log_level`；`from_env()` 读取 `NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD` 与可选 `DRAWING_GRAPH_QA_MCP_LOG_LEVEL`，不复用 HTTP host/port/CORS/docs 配置。
+- `AssistantHttpConfig`（`src/drawing_graph/config.py`）：产品 HTTP 专用不可变配置；默认 `127.0.0.1:8001`、`allow_remote=false`、空 CORS、65536 bytes、30 秒、8 并发、docs 关闭；`from_env()` 读取 `NEO4J_*` 与 `DRAWING_GRAPH_ASSISTANT_HTTP_*`；password 与 token 在 `repr` 中屏蔽。
+- `AssistantMcpConfig`（`src/drawing_graph/config.py`）：产品 MCP 专用不可变配置，只包含 `neo4j_uri`、`neo4j_user`、`neo4j_password` 和 `log_level`；`from_env()` 读取 `NEO4J_*` 与可选 `DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL`。
 - `create_qa_mcp_runtime(config, driver_factory=None, facade_factory=None, service_factory=None)`：按 driver -> facade -> QAService 顺序装配，支持 fake 注入，初始化失败时逆序清理，`close()` 幂等。
 - `create_mcp_server(tools: DrawingGraphMCPTools)`：返回未启动的 `drawing-graph-qa` server；只注册六个只读工具，不注册 Resources/Prompts/Sampling。
 - `DrawingGraphMCPTools.ask_drawing_page|ask_drawing_block|list_drawing_candidates|get_section_match_status|get_table_caption_status|get_drawing_diagnostics`：六个只读 handler，固定 `write_back=false` 且 `include_payload=false`，只调用一次 QAService。
@@ -109,10 +124,19 @@
 - `DrawingGraphToolFacade.recognize_semantic_targets(targets, model_profile, prompt_version, contract_version, write_back=False)`：精确目标识别预留入口，默认 `write_back=false`。
 - `SemanticRecognitionService.recognize_targets(page_facts, targets, ...)`：执行前按统一 cache key 二次校验，缓存命中不调用供应商、不创建持久化 run log。
 - `create_semantic_gap_decision_service() -> SemanticGapDecisionService`：工厂装配纯决策服务，不连接数据库、不读取供应商凭据。
+- `TraceabilityService.record_answer_trace(...) -> TraceWriteResult`、`get_trace(request_id, actor=None) -> TraceQueryResult`、`get_claim_trace(claim_id, actor=None) -> ClaimTrace | None`：产品运行追溯记录与只读回查；store 失败返回稳定 warning，不改变答案业务状态。
+- `create_drawing_assistant_service(..., traceability_service=None, trace_store=None) -> DrawingAssistantService`：可选装配追溯服务；未注入时与原有只读问答行为兼容。
+- `FeedbackService.submit_feedback(event, actor) -> FeedbackResult`、`get_feedback(feedback_id, actor=None)`、`list_feedback_for_request(request_id, actor=None)`：产品内部反馈 API；默认权限策略 fail closed，未提供外部 HTTP/MCP/Web UI adapter。
+- `CandidateReviewAdapter.build_review_request(feedback_event, claim_trace) -> CandidateReviewRequest` 与 `request_review(...) -> CandidateReviewResult`：只处理候选关系 claim，并只调用注入的 `CandidateReviewService.review_candidate_group()`。
+- `answer_package_to_data(package) -> dict`、`build_success_envelope(data, meta)`、`build_error_envelope(code, message, retryable, meta)`、`map_exception_to_error(error) -> (code, retryable)`：产品 adapter 共享序列化/错误映射接口。
+- `create_app(config, runtime_factory=create_assistant_http_runtime)`：产品 HTTP 应用工厂；`POST /api/v1/drawing-assistant/ask` 只构造 `AssistantRequest` 并调用 `DrawingAssistantService.answer()`。
+- `create_assistant_http_runtime(config, driver_factory=None, facade_factory=None, service_factory=None)`：按 driver -> facade -> `DrawingAssistantService` 顺序装配，支持 fake 注入，初始化失败逆序清理，`close()` 幂等。
+- `create_assistant_mcp_runtime(config, ...)` 与 `create_mcp_server(tools: DrawingAssistantMCPTools)`：产品 MCP runtime 与 `drawing-assistant` server；`ask_drawing_assistant` 是唯一只读工具。
+- `DrawingAssistantMCPTools.ask_drawing_assistant(tool_input)`：只调用一次 `DrawingAssistantService.answer()`，structuredContent 来自 `AnswerPackage` JSON-safe 投影，TextContent 只概述状态与数量。
 
 ## 3. 新依赖
 
-新增依赖都是项目内 Python port、fake 实现、Python 标准库 CLI/JSON 支撑，以及 HTTP adapter/Qwen OpenAI-compatible 调用共用的 HTTPX：`DrawingGraphReadPort`、`MultimodalRecognitionClient`、`RecognitionRunLogPort`、`SemanticEvidenceRepositoryPort`、`SectionMatchWritePort`、`SectionMatchQueryPort`、`SemanticCacheService`、`SemanticPayloadStore`，以及 QA 层的 `QARequest`、`QAAnswer`、`AnswerFact`、`EvidenceRef` 等 QA DTO。第三阶段新增官方 MCP Python SDK（`requirements.txt`：`mcp>=1.29.0,<2.0`）作为本地 STDIO MCP adapter 依赖；产品公共合同与通用检索模块新增项目内依赖：`assistant_models.py` 的公共 DTO、`RetrievalPlanner`/`RetrievalExecutor`/`RetrievalBundleBuilder`、`GraphRetrievalService`，以及 `assistant_qa_mapping.py` 对 `qa_models.py` 的单向导入；未新增外部依赖。
+新增依赖都是项目内 Python port、fake 实现、Python 标准库 CLI/JSON 支撑，以及 HTTP adapter/Qwen OpenAI-compatible 调用共用的 HTTPX：`DrawingGraphReadPort`、`MultimodalRecognitionClient`、`RecognitionRunLogPort`、`SemanticEvidenceRepositoryPort`、`SectionMatchWritePort`、`SectionMatchQueryPort`、`SemanticCacheService`、`SemanticPayloadStore`，以及 QA 层的 `QARequest`、`QAAnswer`、`AnswerFact`、`EvidenceRef` 等 QA DTO。第三阶段新增官方 MCP Python SDK（`requirements.txt`：`mcp>=1.29.0,<2.0`）作为本地 STDIO MCP adapter 依赖；产品公共合同与通用检索模块新增项目内依赖：`assistant_models.py` 的公共 DTO、`RetrievalPlanner`/`RetrievalExecutor`/`RetrievalBundleBuilder`、`GraphRetrievalService`，以及 `assistant_qa_mapping.py` 对 `qa_models.py` 的单向导入；追溯与反馈新增的 `TraceStorePort`、`FeedbackStorePort`、内存实现、权限策略和状态机仍只依赖项目内合同与 Python 标准库，未新增外部依赖。
 
 `ToolFacadeConfig` 只接收 `default_write_back`、`model_profile`、`prompt_version`、`run_log_path`、`run_log_store`、`payload_store`、`semantic_repository`、`cache_store`、`section_match_rule_version` 等受控配置，不接收 Neo4j 密码、供应商 API key、token 或 secret。真实 Neo4j 集成测试仍需要单独配置 `NEO4J_TEST_URI`、`NEO4J_TEST_USER` 和 `NEO4J_TEST_PASSWORD`；跳过不等于通过。
 
@@ -127,6 +151,7 @@
 - 候选关系保持 candidate 语义，`CandidateRelationSummary.fact_kind` 固定为 `candidate`。`matched_candidate` 和候选边不是正式事实。
 - 既有 `DrawingPage -[:USES_BASIC_INFO]-> DrawingBasicInfo`、`BlockCaption -[:CANDIDATE_CAPTION_OF]-> DrawingBlock`、`DrawingBlock -[:CANDIDATE_HAS_SECTION_MARK]-> CrossSection` 语义保持不变，候选关系 AI 复核是独立显式流程，不自动触发候选关系 AI 复核。
 - MCP 接入不改变 Neo4j 数据模型，也不改变 QA 领域 DTO（`QARequest`/`QAAnswer`）；MCP 输入/输出模型只存在于 adapter 层，不写入领域模块。
+- `TraceRecord`、`ClaimTrace`、`FeedbackEvent`、`FeedbackAuditEvent` 与 `FeedbackResult` 属于产品运行审计数据；首版只存于注入的 trace/feedback store，不新增 Neo4j 节点、关系、索引、约束或迁移。
 
 ## 5. 架构变化
 
@@ -134,7 +159,7 @@
 
 QA 编排层位于 facade 外侧，CLI、HTTP 与 MCP 是同级 adapter，依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`（HTTP 对应 `HTTP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`，MCP 对应 `MCP adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`）。`scripts\drawing_graph_qa.py`、`scripts\serve_drawing_graph_qa.py` 与 `scripts\serve_drawing_graph_mcp.py` 是最外层 adapter，`DrawingGraphQAService` 只通过 `DrawingGraphToolFacade` 获取图谱信息，默认 `write_back=false`，不写 Cypher、不持久化语义证据、不提升候选关系。HTTP 默认 loopback、单 worker、只读，CORS 与 OpenAPI docs 默认关闭；`/health/ready` 的 `neo4j_status="not_checked"` 不等于 live Neo4j 验证。本地只读 STDIO MCP adapter 已实现；首版不实现 Streamable HTTP，远程认证、OAuth、RBAC、TLS、多 worker、HTTP 写回与 plugin 发布仍未实现。当前已有可选 Qwen/DashScope 多模态客户端，但不默认调用，live DashScope 验证需单独执行；Ava 专有 adapter、OCR 和数据库 schema 变更仍未实现。
 
-产品实现层新增并列链路：`Product adapter（后续）-> DrawingAssistantService（后续完整产品编排，当前未实现）-> QuestionUnderstandingService（01 问题理解闭环已实现）-> GraphRetrievalService -> RetrievalBundle -> SemanticGapDecisionService（03 语义缺口决策闭环已实现首阶段）-> 后续 04 多模态识别 / 05 证据融合 -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`。首阶段已落地产品公共合同、通用检索闭环、01 问题理解闭环与 03 语义缺口决策闭环（`assistant_*.py`），默认只读、`write_back=false`、不调用 Qwen、不创建 RecognitionRun、不写 Neo4j；候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系。03 决策模块不调用模型、不写缓存、不写 Neo4j、不创建 RecognitionRun，`write_back_recommendation` 只是建议。完整 `DrawingAssistantService`、证据融合、答案生成、反馈状态机、外部产品级 CLI/HTTP/MCP 入口与产品级写回仍未实现；未配置 live 环境导致集成测试 skipped 时，跳过不等于 live Neo4j 通过。
+产品公共合同与通用检索闭环本身不调用 Qwen、不创建 RecognitionRun、不写 Neo4j。产品实现层只读问答链路为：`QuestionUnderstandingService（01 已实现）-> GraphRetrievalService -> RetrievalBundle -> SemanticGapDecisionService（03 已实现）-> MultimodalRecognitionExecutionService（04 已实现）-> EvidenceFusionService（05 已实现）-> EvidenceBundle -> AnswerGenerationService（06 已实现）-> DrawingAssistantService（07 已实现）-> Product CLI/HTTP/MCP`。`DrawingAssistantService.answer()` 已把 01—06 装配成产品级只读总编排入口，并可选调用 `TraceabilityService -> TraceStorePort` 记录产品运行追溯；反馈是独立内部链路：`FeedbackService -> FeedbackPermissionPolicy / FeedbackStateMachine / FeedbackStorePort -> CandidateReviewAdapter（仅 request_review）-> CandidateReviewService`。图谱读取和既有语义执行仍只经 `DrawingGraphToolFacade -> ports/services -> repository/Neo4j`，反馈也不能绕过 `CandidateReviewService`。07 固定问答链路只读，传给 05 的 `write_back_policy=None`，识别调用固定 `write_back=false`；追溯只写审计 store，`confirm/reject/correct` 只写反馈 store 与审计，均不写业务事实。候选关系不是正式事实，`matched_candidate` 不能当作正式图谱关系。外部产品级 Web UI 与反馈入口、外部持久化 store、多用户账号集成、真实文本 provider、live Neo4j 与 live DashScope 验证仍未完成；未配置 live 环境导致集成测试 skipped 时，跳过不等于 live Neo4j 通过。
 
 Skill 与 MCP 分工：`drawing-graph-operator` Skill 是 facade 外侧的操作策略层，负责自然语言路由、多问题拆分、工具选择、透明降级和结果解释；MCP adapter 负责协议初始化、工具 Schema、annotations 与 STDIO 生命周期。Skill 不创建 driver、不执行 Cypher、不调用 repository 写回，也不承载图谱业务逻辑。
 
@@ -150,7 +175,7 @@ Skill 与 MCP 分工：`drawing-graph-operator` Skill 是 facade 外侧的操作
 
 ## 6. 04 多模态识别执行层模块
 
-产品实现层 04 已实现供应商无关、同步优先的多模态识别执行流水线，模块清单与职责如下：
+`changes/产品实现层/多模态识别产品化/tasks.md` 的 Task 1-43 已全部实现。产品实现层 04 形成供应商无关、同步优先的多模态识别执行流水线，模块清单与职责如下：
 
 - `src/drawing_graph/recognition_models.py`：执行层枚举与纯 DTO（任务、状态、attempt、usage、成本、延迟、执行结果）。
 - `src/drawing_graph/recognition_tasks.py`：七类任务的不可变 Task Registry 与合同规格。
@@ -168,4 +193,83 @@ Skill 与 MCP 分工：`drawing-graph-operator` Skill 是 facade 外侧的操作
 
 边界保持：默认 `write_back=false`；`RecognitionRun`/`RecognitionAttempt` 图谱外；`TextObservation` 与三类 `Interpretation` 图谱内；relation 输出只能为 `candidate_relation`，候选不等于正式事实；不引入 OCR；不改变 Neo4j 来源事实 schema。
 
-验证分层：离线合同/单元测试（全量 1808 通过、4 跳过）属于离线验证；live DashScope、黄金集、live Neo4j、Codex/MCP 均未声称通过。
+专项验收入口为 `python -m unittest tests.test_multimodal_recognition_docs tests.test_multimodal_recognition_acceptance tests.test_multimodal_recognition_contracts tests.test_multimodal_recognition_boundaries tests.test_tool_facade tests.test_semantic_service tests.test_qwen_semantic_client -v`。2026-08-13 当前回归快照：专项 73 项通过；完整 `python -m unittest discover tests -v` 为 1823 项运行、4 项因缺少 live Neo4j 测试配置而跳过，其余通过。以上属于离线/fake 验证；live DashScope、黄金集、live Neo4j、Codex/MCP 均未声称通过，本次文档同步也未执行这些 live 验证。
+
+## 7. 05 证据融合与缓存闭环模块
+
+`changes/产品实现层/证据融合与缓存闭环/tasks.md` 的 Task 1-56 已全部实现。产品实现层 05 位于 04 之后、06 之前，是独立、确定性、默认只读的证据融合与缓存闭环，模块清单与职责如下：
+
+- `src/drawing_graph/assistant_evidence_fusion_models.py`：05 稳定枚举与不可变 DTO（`EvidenceBundle`、冲突、claim 支撑、answerability、lineage、缓存汇总、写回合同）。
+- `src/drawing_graph/assistant_recognition_projection.py`：04 结果到统一 `EvidenceItem` 的安全投影（observation/interpretation/candidate/diagnostic）与 scope 校验。
+- `src/drawing_graph/assistant_evidence_normalization.py`：规范化规则注册、comparison/family/fingerprint 构造、claim capability 注册与断面标签复用。
+- `src/drawing_graph/assistant_evidence_deduplication.py`：四条件全同合并与 provenance 保留。
+- `src/drawing_graph/assistant_evidence_rules.py`：03/05 共用的 scope/fact-kind/status/formal 纯规则。
+- `src/drawing_graph/assistant_evidence_lineage.py`：stale 策略注册与 supersede 计划。
+- `src/drawing_graph/assistant_evidence_conflicts.py`：确定性冲突矩阵与稳定冲突 ID。
+- `src/drawing_graph/assistant_claim_support.py`：requirement 到 claim capability 的映射与支撑评估。
+- `src/drawing_graph/assistant_answerability.py`：subrequest/request answerability 聚合。
+- `src/drawing_graph/assistant_cache_closure.py`：expected/actual/lineage/write-back 缓存汇总。
+- `src/drawing_graph/assistant_semantic_write_back.py`：受控写回 fail-closed 门控与固定顺序状态机。
+- `src/drawing_graph/assistant_evidence_fusion.py`：`EvidenceFusionService.fuse()` 唯一编排入口。
+- `src/drawing_graph/assistant_evidence_fusion_factory.py`：`create_evidence_fusion_service()` 无副作用装配。
+
+边界保持：默认 `write_back=false`；dry-run 零持久化；persistent cache 仅在受控写回授权通过后提交；`candidate` 不等于 formal，融合/置信度/写回授权均不提升 `fact_kind`；05 不调用模型、不查询 Neo4j、不执行 Cypher、不新增外部 API；06/07 已消费 05 的 `EvidenceBundle` 生成答案并完成只读总编排，但不新增 schema、不写回、不提升候选关系。产品级 HTTP/MCP 问答 adapter 由“产品级 HTTP/MCP adapter”独立实现。
+
+验证分层：2026-08-14 的 05 专项回归运行 280 项，0 失败、0 错误、0 跳过；05 当时的完整离线回归运行 2150 项，0 失败、0 错误、4 项因缺少 live Neo4j 测试环境变量而跳过。06/07 完成后新增的产品答案与只读总编排离线验证见第 8 节。以上仅证明离线/fake、合同与静态边界；live Neo4j、live DashScope、黄金集和真实文本 provider 均未验证。
+
+## 8. 06 答案生成与 07 只读总编排模块
+
+`changes/产品实现层/答案生成与只读总编排MVP/tasks.md` 的 Task 1-65 已实现产品级答案生成与只读总编排。模块清单与职责如下：
+
+- `src/drawing_graph/assistant_claim_builder.py`：`ClaimBuilder.build()` 把 `ClaimSupportAssessment` 确定性投影为 `Claim`，`build_claim_id()` 生成稳定 claim ID；candidate/interpretation/conflict 不被提升为 formal/source fact。
+- `src/drawing_graph/assistant_citation_builder.py`：`CitationBuilder.build()` 从 claim evidence 投影最小 citation 并稳定排序、去重，`bind_claim_citations()` 建立 claim/citation 双向一致；不复制 payload、不输出 image_path/URI。
+- `src/drawing_graph/assistant_answer_generation.py`：06 唯一入口 `AnswerGenerationService.generate()`，内部组合 `AnswerStatusResolver`、`MachineAnswerBuilder`、`CanonicalAnswerSerializer`、`AnswerPackageValidator`；`machine_answer` 是权威输出，文本生成只是表现层。
+- `src/drawing_graph/assistant_answer_templates.py`：`ChineseAnswerTemplateRenderer.render()` 按五章节渲染确定性中文模板，`fact_kind_wording()`/`claim_status_wording()` 提供不提升事实等级的措辞。
+- `src/drawing_graph/assistant_answer_text.py`：受约束文本生成 port、`FakeConstrainedTextGenerator`、`ConstrainedTextValidator` 与 `render_text_with_fallback()` 模板回退。
+- `src/drawing_graph/drawing_assistant_service.py`：07 唯一入口 `DrawingAssistantService.answer()`，内部组合 `SubrequestProjector`、`RecognitionTargetGrouper`、`AnswerPackageAggregator`；固定 01→02→03→04→05→06 顺序，按页 dry-run 识别，全链路 `write_back=false`。
+- `src/drawing_graph/drawing_assistant_factory.py`：`create_drawing_assistant_service(facade, text_generator=None)` 无副作用装配 01—07。
+- `scripts/drawing_assistant.py`：产品级只读 CLI adapter，负责参数、配置、driver 生命周期、service 调用、输出与退出码；不提供 write-back 参数。
+
+边界保持：默认 `write_back=false`；`machine_answer`/claims/citations/status 是权威输出，受约束文本生成只是表现层；candidate/interpretation 不被提升为 formal/source fact；非诊断 claim 必须有 citation；产品 CLI 是现有 QA CLI/HTTP/MCP 的同级 adapter，不替换也不反向依赖它们。产品公共合同仍不新增 schema、业务写回或候选提升；产品运行审计的内存 trace/feedback store 已实现，但不等于外部持久化或业务图谱写入。
+
+验证分层：2026-08-14 的完整离线回归 `python -m unittest discover tests -v` 运行 2428 项，0 失败、0 错误、4 项因缺少 live Neo4j 测试环境变量而跳过。以上仅证明离线/fake、合同与静态边界；live Neo4j、live DashScope、真实文本 provider 均未验证，skipped 不等于 live 通过。
+
+## 9. 产品级 HTTP/MCP adapter 模块
+
+`changes/产品实现层/adapter与产品级验收/tasks.md` 的 Task 1-20 已完成产品级只读 HTTP/MCP adapter 与产品 CLI/HTTP/MCP 三入口验收。产品 adapter 与旧 QA adapter 是同级外部入口：旧 QA CLI/HTTP/MCP 继续调用 `DrawingGraphQAService.ask()` 和六类固定 QA 问题；产品 CLI/HTTP/MCP 只调用 `DrawingAssistantService.answer()`，接收自然语言问题并返回 `AnswerPackage` 结构化答案。
+
+- `src/drawing_graph/assistant_adapter_serialization.py`：产品 adapter 共享 envelope、`AnswerPackage` JSON-safe 投影、稳定错误类别与脱敏。
+- `src/drawing_graph/assistant_http_models.py`、`assistant_http_runtime.py`、`assistant_http.py`、`scripts/serve_drawing_assistant.py`：产品 HTTP request/response/health DTO、driver -> facade -> service 装配、`POST /api/v1/drawing-assistant/ask`、health、认证、body limit、并发上限、超时与稳定错误映射。
+- `src/drawing_graph/assistant_mcp_models.py`、`assistant_mcp_tools.py`、`assistant_mcp_runtime.py`、`assistant_mcp_server.py`、`scripts/serve_drawing_assistant_mcp.py`：产品 MCP 输入输出模型、本地 STDIO runtime/server、只读工具 `ask_drawing_assistant`、同源 structuredContent/TextContent 输出与 stdout 协议纯净。
+- 配置接口：`AssistantHttpConfig` 读取 `NEO4J_*` 与 `DRAWING_GRAPH_ASSISTANT_HTTP_*`；`AssistantMcpConfig` 读取 `NEO4J_*` 与 `DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL`；password/token 的表示和错误输出均脱敏。
+
+边界保持：产品 HTTP/MCP adapter 不直接访问 Neo4j driver、repository、Cypher、Qwen provider 或离线增强规则；runtime 只负责装配 driver -> facade -> `DrawingAssistantService`。默认 `write_back=false`，HTTP/MCP 首版不提供写回入口；`allow_recognition=true` 只允许按需识别，不等于写回授权；`candidate_relation`、`matched_candidate` 与 `CANDIDATE_*` 均保持候选语义。Web UI、远程 MCP、Streamable HTTP MCP、OAuth/RBAC、多 worker 生产部署、HTTP/MCP 写回、外部产品级反馈入口仍未实现。
+
+验证分层：2026-08-17 产品 adapter 专项回归运行 127 项，0 失败、0 错误、0 跳过；根文档契约 `tests.test_readme tests.test_module_docs tests.test_assistant_docs tests.test_assistant_adapter_docs` 共 42 项 OK；全仓离线回归 `python -m unittest discover tests` 运行 2717 项，`OK (skipped=5)`。这些结果属于 unit/fake/offline、HTTP TestClient 与 MCP in-memory client session 验证；HTTP 真实 socket、MCP STDIO 子进程、live Neo4j、live DashScope、真实文本 provider 与真实 MCP 宿主注册均未验证。skipped 不等于 live Neo4j 通过，详见 `docs/acceptance/PRODUCT_ADAPTER_ACCEPTANCE.md`。
+
+## 10. 07 追溯闭环模块
+
+`changes/产品实现层/追溯与反馈闭环/tasks.md` 的第 7 次追溯闭环已实现。产品运行审计层新增追溯模块，位于 `DrawingAssistantService` 外侧，只写产品运行审计 store，不写 Neo4j 业务图谱：
+
+- `src/drawing_graph/assistant_trace_models.py`：追溯 DTO，定义 `TraceModuleEvent`、`TraceCostSummary`、`TraceLatencySummary`、富版 `TraceRecord`（`assistant_models.TraceRecord` 薄版字段的超集）、`TraceWriteResult`、`ClaimTrace`、`TraceQueryResult`；不含 Neo4j driver、repository、Cypher、完整 payload、完整 prompt 或 traceback 字段。
+- `src/drawing_graph/assistant_trace_store.py`：`TraceStorePort` 与 `InMemoryTraceStore`，支持 `append_trace()`、`get_trace()`、`append_claim_trace()`、`get_claim_trace()`；重复 request_id 不静默覆盖；不访问 Neo4j。
+- `src/drawing_graph/assistant_trace_builder.py`：`TraceRecordBuilder.build()` 从 `AssistantRequest`、问题理解、检索、语义决策、识别、融合与答案结果构造单条 `TraceRecord`；只做数据最小化，不读取图谱、不调用模型、不写 store。
+- `src/drawing_graph/assistant_claim_trace.py`：`ClaimTraceProjector.project()` 从 `TraceRecord` 与 `AnswerPackage` 构造 `ClaimTrace`，支持 claim 到 evidence/citation/run 回查；candidate 关系保持 candidate，不使用 Neo4j 内部 ID。
+- `src/drawing_graph/assistant_traceability_service.py`：`TraceabilityService.record_answer_trace()` / `get_trace()` / `get_claim_trace()`；存储不可用时返回 trace warning，不把答案业务状态改成失败，无业务写回能力。
+- `src/drawing_graph/drawing_assistant_service.py`（可选修改）：构造注入 `traceability_service=None`，`answer()` 生成答案后尝试记录 trace；`allow_write_back=true` 仍被拒绝。
+- `src/drawing_graph/drawing_assistant_factory.py`（可选修改）：`create_drawing_assistant_service(..., traceability_service=None, trace_store=None)` 可选装配；默认行为与未注入时兼容。
+
+边界：trace 只写 `TraceStorePort`，不新增 Neo4j schema，不写业务事实，不把 `candidate_relation`/`matched_candidate` 写成 `formal_relation`；trace 输出脱敏。本节只描述追溯职责；第 8 次反馈状态机、权限、审计与 `CandidateReviewService` 受控对接已在下一节独立实现，外部反馈 API 仍未实现。
+
+## 11. 08 反馈闭环模块
+
+`changes/产品实现层/追溯与反馈闭环/tasks.md` 的第 8 次反馈闭环已实现。反馈模块位于 trace 模块外侧，只写反馈 store 与审计事件，仅在 `request_review` 且权限允许时受控调用注入的 `CandidateReviewService`：
+
+- `src/drawing_graph/assistant_feedback_models.py`：`FeedbackAction`（confirm/reject/correct/request_review）、`FeedbackStatus`（received/validated/recorded/review_required/accepted/rejected/unresolved/forbidden/invalid）、`FeedbackPermission`（read_trace/record_feedback/request_candidate_review/promote_formal_relation）、`FeedbackAuditEvent`、`FeedbackResult`；不含 repository、Cypher、driver 或未脱敏异常字段。
+- `src/drawing_graph/assistant_feedback_store.py`：`FeedbackStorePort` 与 append-only `InMemoryFeedbackStore`，支持追加 feedback/audit、按 feedback_id/request_id 查询、状态记录；重复 feedback_id 不静默覆盖；不访问 Neo4j。
+- `src/drawing_graph/assistant_feedback_permissions.py`：`FeedbackPermissionPolicy.authorize()` 默认 fail-closed；`allow_write_back=false` 阻断候选审核与 formal 提升；`promote_formal_relation` 永远不会由反馈 action 授予。
+- `src/drawing_graph/assistant_feedback_state_machine.py`：`FeedbackStateMachine` 线性推进 received -> validated -> recorded -> review_required -> accepted/rejected/unresolved；confirm/reject/correct 终止于 recorded，不进入 formal promotion；非法跳转被拒绝且每次迁移产生记录。
+- `src/drawing_graph/assistant_candidate_review_adapter.py`：`CandidateReviewAdapter.build_review_request()` / `request_review()` 只处理候选关系 claim，候选集合不完整、跨页、方向不明、缺 evidence refs 时返回稳定错误，仅通过注入的 `CandidateReviewService.review_candidate_group()`；不直接调用 repository、不拼 Cypher。
+- `src/drawing_graph/assistant_feedback_service.py`：`FeedbackService.submit_feedback()` / `get_feedback()` / `list_feedback_for_request()`；串联校验、claim trace 读取、权限、状态机、store 与审计；confirm/reject/correct 只记录反馈，request_review 仅在权限与候选条件满足时调用 adapter；store 写入失败 fail closed。
+
+边界：用户 `confirm` 不改变任何 evidence 的 `fact_kind`，`correct` 不生成来源事实、只形成反馈事件或待审核新证据请求；用户反馈不会直接覆盖来源事实、语义证据、候选关系或正式关系；`candidate_relation`/`matched_candidate` 不等于 `formal_relation`；不新增 Neo4j schema；不实现外部产品级 Web UI 或外部反馈入口。2026-08-17 追溯与反馈专项验收快照中，专项合并回归运行 107 项且全部通过，详见 `docs/acceptance/TRACE_FEEDBACK_ACCEPTANCE.md`；后续产品 adapter 验收已补齐当时过期的根文档契约断言，并记录全仓离线回归 2717 项 `OK (skipped=5)`。live Neo4j、live DashScope 与真实文本 provider 均未验证。

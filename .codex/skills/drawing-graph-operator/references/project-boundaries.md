@@ -31,6 +31,13 @@ Codex Skill
   -> semantic service / run log / semantic repository
   -> candidate review service
   -> controlled repository / Neo4j
+
+Codex Skill
+  -> 产品 MCP 工具（drawing-assistant / ask_drawing_assistant）或产品只读 CLI（scripts/drawing_assistant.py）
+  -> DrawingAssistantService.answer()
+  -> QuestionUnderstandingService / GraphRetrievalService / SemanticGapDecisionService
+  -> DrawingGraphToolFacade
+  -> EvidenceFusionService / AnswerGenerationService
 ```
 
 禁止依赖方向：
@@ -42,7 +49,7 @@ Codex Skill
 
 ## 3. 当前包含与不包含范围
 
-当前已实现的能力包括：基础导入闭环、离线派生关系增强闭环、候选关系复核骨架、语义证据层（`TextObservation`、三类 `Interpretation`、图谱外 `RecognitionRun` 日志、稳定查询投影）、facade 只读/语义/候选查询、QA 问答 CLI、只读 HTTP API 和本地只读 MCP adapter（STDIO，`drawing-graph-qa`）。当前不包含：
+当前已实现的能力包括：基础导入闭环、离线派生关系增强闭环、候选关系复核骨架、语义证据层（`TextObservation`、三类 `Interpretation`、图谱外 `RecognitionRun` 日志、稳定查询投影）、facade 只读/语义/候选查询、QA 问答 CLI、只读 HTTP API、本地只读 MCP adapter（其中 QA MCP 为 STDIO，`drawing-graph-qa`）、产品级只读 CLI/HTTP/MCP adapter（`drawing-assistant`，工具 `ask_drawing_assistant`）和产品级 `DrawingAssistantService.answer()` 问答总编排。当前不包含：
 
 - 远程 MCP 或 Streamable HTTP MCP
 - MCP 写回

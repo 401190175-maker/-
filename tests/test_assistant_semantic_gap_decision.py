@@ -271,5 +271,64 @@ class SemanticGapDecisionOrchestrationTests(unittest.TestCase):
         self.assertEqual((), decision.deferred_targets)
 
 
+class SemanticGapSubrequestTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.service = SemanticGapDecisionService()
+
+    def test_consistent_projected_subrequest_id_is_preserved(self):
+        question_result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:1",
+        )
+        decision = self.service.decide(
+            question_result,
+            make_bundle(subrequest_id="sub:1"),
+        )
+        self.assertEqual("sub:1", decision.subrequest_id)
+
+    def test_inconsistent_projected_subrequest_id_fails_closed(self):
+        question_result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:1",
+        )
+        with self.assertRaises(ValueError) as error:
+            self.service.decide(
+                question_result,
+                make_bundle(subrequest_id="sub:2"),
+            )
+        self.assertIn("subrequest_id", str(error.exception))
+
+    def test_projected_question_with_missing_bundle_subrequest_fails_closed(self):
+        question_result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:1",
+        )
+        with self.assertRaises(ValueError) as error:
+            self.service.decide(question_result, make_bundle())
+        self.assertIn("subrequest_id", str(error.exception))
+
+    def test_top_level_none_remains_compatible(self):
+        decision = self.service.decide(make_result(), make_bundle())
+        self.assertIsNone(decision.subrequest_id)
+
+    def test_subrequest_validation_does_not_change_decision_algorithm(self):
+        question_result = QuestionUnderstandingResult(
+            request_id="req:1",
+            question_type="page_summary",
+            subrequest_id="sub:1",
+            required_evidence=(make_requirement(),),
+        )
+        decision = self.service.decide(
+            question_result,
+            make_bundle(subrequest_id="sub:1"),
+        )
+        self.assertEqual("sub:1", decision.subrequest_id)
+        self.assertEqual(1, len(decision.requirement_assessments))
+        self.assertFalse(decision.write_back_recommendation)
+
+
 if __name__ == "__main__":
     unittest.main()

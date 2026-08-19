@@ -221,13 +221,28 @@ class RecognitionExecutionServiceTests(unittest.TestCase):
             _write_png(source)
             provider = FakeMultimodalRecognitionClient(script=(_success_payload(),))
             result = _service(provider, executor=_offline_executor()).execute(
-                _request(deadline_seconds=60.0),
+                _request(deadline_seconds=0.05),
                 _page_facts(str(source)),
-                RecognitionExecutionPolicy(deadline_seconds=60.0),
+                RecognitionExecutionPolicy(deadline_seconds=0.05),
             )
         self.assertIs(RecognitionExecutionStatus.DEADLINE_EXCEEDED, result.status)
         self.assertEqual(0, len(result.attempts))
         self.assertEqual(0, len(provider.requests))
+
+    def test_deadline_equal_to_single_call_timeout_still_calls_provider(self) -> None:
+        """默认 60s 截止 + 60s 单次超时配置必须能发起一次 provider 调用。"""
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            provider = FakeMultimodalRecognitionClient(script=(_success_payload(),))
+            result = _service(provider, executor=_offline_executor()).execute(
+                _request(deadline_seconds=60.0),
+                _page_facts(str(source)),
+                RecognitionExecutionPolicy(deadline_seconds=60.0),
+            )
+        self.assertIs(RecognitionExecutionStatus.SUCCEEDED, result.status)
+        self.assertEqual(1, len(result.attempts))
+        self.assertEqual(1, len(provider.requests))
 
     def test_dry_run_never_writes_persistence(self) -> None:
         service = _service(FakeMultimodalRecognitionClient(), executor=_offline_executor())
@@ -260,6 +275,38 @@ class RecognitionExecutionServiceTests(unittest.TestCase):
             "semantic_service",
         ):
             self.assertNotIn(forbidden, import_lines)
+
+
+class StableRunIdTests(unittest.TestCase):
+    def test_result_reuses_request_run_id(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            provider = FakeMultimodalRecognitionClient(script=(_success_payload(),))
+            result = _service(provider, executor=_offline_executor()).execute(
+                _request(),
+                _page_facts(str(source)),
+                RecognitionExecutionPolicy(
+                    deadline_seconds=120.0,
+                    structure_repair_attempts=0,
+                ),
+            )
+        self.assertEqual("run-1", result.recognition_run_id)
+
+    def test_failure_result_reuses_request_run_id(self) -> None:
+        with _fixture_dir() as tmp:
+            source = Path(tmp) / "page-1.png"
+            _write_png(source)
+            provider = FakeMultimodalRecognitionClient(script=("http_5xx",))
+            result = _service(provider, executor=_offline_executor()).execute(
+                _request(),
+                _page_facts(str(source)),
+                RecognitionExecutionPolicy(
+                    deadline_seconds=120.0,
+                    structure_repair_attempts=0,
+                ),
+            )
+        self.assertEqual("run-1", result.recognition_run_id)
 
 
 if __name__ == "__main__":

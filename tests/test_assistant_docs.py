@@ -40,11 +40,16 @@ class AssistantDocsTests(unittest.TestCase):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.readme)
 
-    def test_readme_names_product_modules_and_does_not_claim_full_assistant(self):
+    def test_readme_records_completed_assistant_and_remaining_external_boundaries(self):
         for name in ("GraphRetrievalService", "assistant_qa_mapping.py"):
             with self.subTest(name=name):
                 self.assertIn(name, self.readme)
-        self.assertIn("完整 DrawingAssistantService 尚未实现", self.readme)
+        # 同时锁定已完成能力和仍未实现的外部入口，避免状态再次倒退。
+        self.assertIn("`DrawingAssistantService` 与产品级只读 CLI 已在 06/07 MVP 中实现", self.readme)
+        self.assertIn("产品级只读 HTTP/MCP 问答 adapter 已实现", self.readme)
+        self.assertIn("外部产品级 Web UI 与反馈入口", self.readme)
+        self.assertIn("外部持久化 store", self.readme)
+        self.assertNotIn("完整 DrawingAssistantService 尚未实现", self.readme)
 
     def test_module_doc_records_product_modules(self):
         for name in PRODUCT_MODULE_NAMES:
@@ -67,8 +72,15 @@ class AssistantDocsTests(unittest.TestCase):
     def test_architecture_records_product_layer_chain_and_boundaries(self):
         self.assertIn("产品公共合同与通用检索闭环", self.architecture)
         self.assertIn("GraphRetrievalService", self.architecture)
-        self.assertIn("DrawingAssistantService（后续完整产品编排，当前未实现）", self.architecture)
+        # 架构层描述整体产品链路，因此允许显式配置 Qwen，但不得默认调用。
+        self.assertIn("DrawingAssistantService（07 只读总编排，已实现）", self.architecture)
+        self.assertIn("FeedbackService（08）", self.architecture)
+        self.assertIn("外部产品级 Web UI 与反馈入口", self.architecture)
+        self.assertIn("不默认调用 Qwen", self.architecture)
+        self.assertNotIn("DrawingAssistantService（后续完整产品编排，当前未实现）", self.architecture)
         for phrase in BOUNDARY_PHRASES:
+            if phrase == "不调用 Qwen":
+                continue
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.architecture)
         self.assertIn("tests/test_assistant_retrieval_boundaries.py", self.architecture)

@@ -16,7 +16,7 @@ from .recognition_execution import MultimodalRecognitionExecutionService
 from .recognition_image_preprocessing import RegionImagePreprocessor
 from .recognition_models import RecognitionExecutionPolicy
 from .recognition_tasks import build_default_task_registry
-from .semantic_cache import InMemorySemanticCacheService
+from .semantic_cache import InMemorySemanticCacheService, RequestSemanticMemo
 from .semantic_image_inputs import SemanticImageInputBuilder
 from .semantic_payload_store import InMemorySemanticPayloadStore
 from .recognition_run_log import InMemoryRecognitionRunLog
@@ -58,6 +58,7 @@ def create_tool_facade(read_port, config: ToolFacadeConfig | None = None) -> Dra
         payload_store=payload_store,
         attempt_log=attempt_log,
         execution_policy=execution_policy,
+        request_memo_factory=RequestSemanticMemo,
     )
     return DrawingGraphToolFacade(
         read_port=read_port,
@@ -99,6 +100,7 @@ def create_neo4j_tool_facade(
         payload_store=payload_store,
         attempt_log=attempt_log,
         execution_policy=execution_policy,
+        request_memo_factory=RequestSemanticMemo,
     )
     relation_repository = RelationRepository(driver)
     return DrawingGraphToolFacade(

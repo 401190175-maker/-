@@ -232,5 +232,27 @@ class SemanticNeo4jInterpretationsTest(unittest.TestCase):
         self.assertEqual(("obs:1", "obs:2"), interpretations[0].supported_by_observation_ids)
 
 
+class SemanticInterpretationLineageWriteTests(unittest.TestCase):
+    def test_marks_interpretation_stale_with_whitelisted_labels(self):
+        driver = FakeDriver()
+        repository = SemanticNeo4jRepository(driver)
+
+        repository.mark_evidence_stale(
+            ("interpretation:1",),
+            superseded_by_evidence_id="interpretation:2",
+            stale_reason="superseded",
+            stale_at="2026-08-13T00:00:00Z",
+            evidence_family_key="family:1",
+        )
+
+        cypher, parameters = driver.sessions[0].transaction.calls[0]
+        self.assertIn("BlockInterpretation", parameters["allowed_labels"])
+        self.assertIn("BasicInfoInterpretation", parameters["allowed_labels"])
+        self.assertIn("TableInterpretation", parameters["allowed_labels"])
+        self.assertNotIn("DrawingBlock", parameters["allowed_labels"])
+        self.assertNotIn("interpretation:1", cypher)
+        self.assertEqual("family:1", parameters["evidence_family_key"])
+
+
 if __name__ == "__main__":
     unittest.main()

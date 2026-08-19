@@ -33,6 +33,7 @@ class RecognitionRunLogPort(Protocol):
         output_contract_version: str = "1",
         preprocessing_version: str = "preprocess-v1",
         payload_ref: str | None = None,
+        recognition_run_id: str | None = None,
     ) -> RecognitionRunSummary:
         """Create a pending graph-external run log."""
 
@@ -84,10 +85,11 @@ class InMemoryRecognitionRunLog:
         output_contract_version: str = "1",
         preprocessing_version: str = "preprocess-v1",
         payload_ref: str | None = None,
+        recognition_run_id: str | None = None,
     ) -> RecognitionRunSummary:
         now = _now()
         run = RecognitionRunSummary(
-            recognition_run_id=f"run:{uuid4()}",
+            recognition_run_id=recognition_run_id or f"run:{uuid4()}",
             run_type=run_type,
             page_id=page_id,
             model_profile=model_profile,

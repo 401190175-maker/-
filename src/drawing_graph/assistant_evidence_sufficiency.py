@@ -24,6 +24,12 @@ from .assistant_models import (
     RequirementAssessmentStatus,
     RetrievalBundle,
 )
+from .assistant_evidence_rules import (
+    allowed_fact_kinds,
+    formal_review_required,
+    scope_matches,
+    status_acceptability,
+)
 
 
 _BUCKETS_BY_EVIDENCE_TYPE = {
@@ -37,36 +43,6 @@ _BUCKETS_BY_EVIDENCE_TYPE = {
     EvidenceType.SEMANTIC_PAYLOAD: (),
     EvidenceType.CANDIDATE_RELATIONS: ("candidate_relations",),
     EvidenceType.SECTION_MATCHES: ("candidate_relations", "formal_relations"),
-}
-
-_ALLOWED_KINDS_BY_EVIDENCE_TYPE = {
-    EvidenceType.PROJECT_DRAWING_SETS: frozenset({FactKind.SOURCE_FACT}),
-    EvidenceType.DRAWING_SET_PAGES: frozenset({FactKind.SOURCE_FACT}),
-    EvidenceType.PAGE_SOURCE_FACTS: frozenset({FactKind.SOURCE_FACT}),
-    EvidenceType.BLOCK_TRACE: frozenset({FactKind.SOURCE_FACT}),
-    EvidenceType.BLOCK_RELATIONS: frozenset({FactKind.DERIVED_RELATION}),
-    EvidenceType.TEXT_OBSERVATIONS: frozenset({FactKind.SEMANTIC_OBSERVATION}),
-    EvidenceType.STRUCTURED_INTERPRETATIONS: frozenset({FactKind.SEMANTIC_INTERPRETATION}),
-    EvidenceType.SEMANTIC_PAYLOAD: frozenset(),
-    EvidenceType.CANDIDATE_RELATIONS: frozenset({FactKind.CANDIDATE_RELATION}),
-    EvidenceType.SECTION_MATCHES: frozenset(
-        {FactKind.CANDIDATE_RELATION, FactKind.FORMAL_RELATION}
-    ),
-}
-
-_BAD_STATUSES = frozenset(
-    {"stale", "rejected", "recognition_failed", "failed", "not_found"}
-)
-
-_ACCEPTABLE_STATUSES_BY_KIND = {
-    FactKind.SOURCE_FACT: None,
-    FactKind.DERIVED_RELATION: None,
-    FactKind.SEMANTIC_OBSERVATION: frozenset({"confirmed"}),
-    FactKind.SEMANTIC_INTERPRETATION: frozenset({"interpreted"}),
-    FactKind.CANDIDATE_RELATION: frozenset(
-        {"candidate", "matched_candidate", "confirmed"}
-    ),
-    FactKind.FORMAL_RELATION: frozenset({"formal", "confirmed"}),
 }
 
 _GENERATABLE_EVIDENCE_TYPES = frozenset(
@@ -168,10 +144,7 @@ class EvidenceSufficiencyEvaluator:
     ) -> tuple[list[EvidenceItem], list[EvidenceItem], list[ReasonCode]]:
         """按 fact kind 允许集过滤，禁止跨层级替代证据。"""
 
-        allowed = _ALLOWED_KINDS_BY_EVIDENCE_TYPE.get(
-            requirement.evidence_type,
-            frozenset(),
-        )
+        allowed = allowed_fact_kinds(requirement.evidence_type)
         kept: list[EvidenceItem] = []
         kind_rejected: list[EvidenceItem] = []
         reasons = list(reject_reasons)
@@ -190,11 +163,7 @@ class EvidenceSufficiencyEvaluator:
     ) -> bool:
         """formal 缺失但存在 candidate 时要求正式复核，不直接视为满足。"""
 
-        if requirement.evidence_type is not EvidenceType.SECTION_MATCHES:
-            return False
-        if any(item.fact_kind is FactKind.FORMAL_RELATION for item in matched):
-            return False
-        return any(item.fact_kind is FactKind.CANDIDATE_RELATION for item in matched)
+        return formal_review_required(requirement.evidence_type, matched)
 
     @staticmethod
     def _status_filter(
@@ -210,26 +179,12 @@ class EvidenceSufficiencyEvaluator:
         status_rejected: list[EvidenceItem] = []
         reasons = list(reject_reasons)
         for item in matched:
-            status = item.status
-            if status in _BAD_STATUSES:
+            reason = status_acceptability(item.fact_kind, item.status, minimum)
+            if reason is None:
+                kept.append(item)
+            else:
                 status_rejected.append(item)
-                reasons.append(
-                    ReasonCode.EVIDENCE_STALE
-                    if status == "stale"
-                    else ReasonCode.STATUS_INSUFFICIENT
-                )
-                continue
-            acceptable = _ACCEPTABLE_STATUSES_BY_KIND.get(item.fact_kind)
-            if acceptable is not None:
-                if status not in acceptable:
-                    status_rejected.append(item)
-                    reasons.append(ReasonCode.STATUS_INSUFFICIENT)
-                    continue
-                if minimum is not None and status != minimum:
-                    status_rejected.append(item)
-                    reasons.append(ReasonCode.STATUS_INSUFFICIENT)
-                    continue
-            kept.append(item)
+                reasons.append(reason)
         conflicting_items = EvidenceSufficiencyEvaluator._conflicting_items(kept)
         if conflicting_items:
             conflict_ids = {item.evidence_id for item in conflicting_items}
@@ -275,33 +230,7 @@ class EvidenceSufficiencyEvaluator:
     def _item_matches_scope(target: AssistantScope, scope: AssistantScope) -> bool:
         """判断证据 scope 是否落在需求目标 page/block/element 范围内。"""
 
-        if target.element_id is not None:
-            if scope.element_id != target.element_id:
-                return False
-        elif target.block_id is not None:
-            if scope.block_id != target.block_id:
-                return False
-        elif target.cross_section_id is not None:
-            if scope.cross_section_id != target.cross_section_id:
-                return False
-        elif target.table_caption_id is not None:
-            if scope.table_caption_id != target.table_caption_id:
-                return False
-        elif target.table_id is not None:
-            if scope.table_id != target.table_id:
-                return False
-        elif target.page_id is not None:
-            if scope.page_id != target.page_id:
-                return False
-        else:
-            return False
-        if (
-            target.page_id is not None
-            and scope.page_id is not None
-            and scope.page_id != target.page_id
-        ):
-            return False
-        return True
+        return scope_matches(target, scope)
 
     @staticmethod
     def _build_assessment(

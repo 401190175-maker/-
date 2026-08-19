@@ -165,7 +165,14 @@ class SemanticQueryProjection:
                 created_at=item.created_at,
                 image_hash=item.image_hash,
                 cache_key=item.cache_key,
-                evidence={"target_element_id": item.target_element_id, "page_id": item.page_id},
+                evidence={
+                    "target_element_id": item.target_element_id,
+                    "page_id": item.page_id,
+                    "evidence_family_key": item.evidence_family_key,
+                    "superseded_by_evidence_id": item.superseded_by_evidence_id,
+                    "stale_reason": item.stale_reason,
+                    "stale_at": item.stale_at,
+                },
                 persisted=False,
             )
             for item in observations
@@ -206,6 +213,12 @@ class SemanticQueryProjection:
                     "element_id": _source_element_id(item),
                     "page_id": item.page_id,
                     "payload_ref": item.payload_ref,
+                    "evidence_family_key": item.evidence_family_key,
+                    "supersedes_evidence_ids": item.supersedes_evidence_ids,
+                    "superseded_by_evidence_id": item.superseded_by_evidence_id,
+                    "stale_reason": item.stale_reason,
+                    "stale_at": item.stale_at,
+                    "normalization_rule_version": getattr(item, "normalization_rule_version", None),
                 },
                 persisted=False,
             )

@@ -24,6 +24,7 @@ class ObservationStatus(str, Enum):
     AMBIGUOUS = "ambiguous"
     NOT_FOUND = "not_found"
     RECOGNITION_FAILED = "recognition_failed"
+    STALE = "stale"
 
 
 class RecognitionRunStatus(str, Enum):
@@ -72,6 +73,11 @@ class TextObservation:
     output_contract_version: str = "1"
     preprocessing_version: str = "preprocess-v1"
     created_at: str | None = None
+    evidence_family_key: str | None = None
+    normalization_rule_version: str | None = None
+    superseded_by_evidence_id: str | None = None
+    stale_reason: str | None = None
+    stale_at: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -100,6 +106,14 @@ class TextObservation:
         _require_optional_text(self.image_hash, "image_hash")
         _require_optional_text(self.cache_key, "cache_key")
         _require_optional_text(self.created_at, "created_at")
+        for field_name in (
+            "evidence_family_key",
+            "normalization_rule_version",
+            "superseded_by_evidence_id",
+            "stale_reason",
+            "stale_at",
+        ):
+            _require_optional_text(getattr(self, field_name), field_name)
         object.__setattr__(self, "status", status)
 
 
@@ -132,6 +146,11 @@ class BlockInterpretation:
     prompt_version: str = "default"
     input_contract_version: str = "1"
     preprocessing_version: str = "preprocess-v1"
+    evidence_family_key: str | None = None
+    supersedes_evidence_ids: tuple[str, ...] = ()
+    superseded_by_evidence_id: str | None = None
+    stale_reason: str | None = None
+    stale_at: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -159,6 +178,14 @@ class BlockInterpretation:
         _require_optional_text(self.payload_ref, "payload_ref")
         _require_optional_text(self.cache_key, "cache_key")
         object.__setattr__(self, "analysis_status", _coerce_interpretation_status(self.analysis_status))
+        _require_optional_text(self.evidence_family_key, "evidence_family_key")
+        object.__setattr__(
+            self,
+            "supersedes_evidence_ids",
+            _read_text_tuple(self.supersedes_evidence_ids, "supersedes_evidence_ids"),
+        )
+        for field_name in ("superseded_by_evidence_id", "stale_reason", "stale_at"):
+            _require_optional_text(getattr(self, field_name), field_name)
 
 
 @dataclass(frozen=True)
@@ -187,6 +214,11 @@ class BasicInfoInterpretation:
     prompt_version: str = "default"
     input_contract_version: str = "1"
     preprocessing_version: str = "preprocess-v1"
+    evidence_family_key: str | None = None
+    supersedes_evidence_ids: tuple[str, ...] = ()
+    superseded_by_evidence_id: str | None = None
+    stale_reason: str | None = None
+    stale_at: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -221,6 +253,14 @@ class BasicInfoInterpretation:
         _require_optional_text(self.payload_ref, "payload_ref")
         _require_optional_text(self.cache_key, "cache_key")
         object.__setattr__(self, "analysis_status", _coerce_interpretation_status(self.analysis_status))
+        _require_optional_text(self.evidence_family_key, "evidence_family_key")
+        object.__setattr__(
+            self,
+            "supersedes_evidence_ids",
+            _read_text_tuple(self.supersedes_evidence_ids, "supersedes_evidence_ids"),
+        )
+        for field_name in ("superseded_by_evidence_id", "stale_reason", "stale_at"):
+            _require_optional_text(getattr(self, field_name), field_name)
 
 
 @dataclass(frozen=True)
@@ -243,6 +283,11 @@ class TableInterpretation:
     prompt_version: str = "default"
     input_contract_version: str = "1"
     preprocessing_version: str = "preprocess-v1"
+    evidence_family_key: str | None = None
+    supersedes_evidence_ids: tuple[str, ...] = ()
+    superseded_by_evidence_id: str | None = None
+    stale_reason: str | None = None
+    stale_at: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -268,6 +313,14 @@ class TableInterpretation:
         _require_optional_text(self.payload_ref, "payload_ref")
         _require_optional_text(self.cache_key, "cache_key")
         object.__setattr__(self, "analysis_status", _coerce_interpretation_status(self.analysis_status))
+        _require_optional_text(self.evidence_family_key, "evidence_family_key")
+        object.__setattr__(
+            self,
+            "supersedes_evidence_ids",
+            _read_text_tuple(self.supersedes_evidence_ids, "supersedes_evidence_ids"),
+        )
+        for field_name in ("superseded_by_evidence_id", "stale_reason", "stale_at"):
+            _require_optional_text(getattr(self, field_name), field_name)
 
 
 @dataclass(frozen=True)

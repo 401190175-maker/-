@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from drawing_graph.semantic_models import (
     BasicInfoInterpretation,
     BlockInterpretation,
+    ObservationStatus,
     TableInterpretation,
     TextObservation,
 )
@@ -140,6 +141,73 @@ class SemanticRepositoryTest(unittest.TestCase):
         self.assertFalse(hasattr(interpretation, "labels"))
         self.assertFalse(hasattr(interpretation, "cypher"))
         self.assertEqual("run:1", interpretation.recognition_run_id)
+
+
+class SemanticLineagePortTests(unittest.TestCase):
+    def test_marks_observation_stale(self):
+        repository = InMemorySemanticEvidenceRepository()
+        repository.save_observations((observation(),))
+
+        updated = repository.mark_evidence_stale(
+            ("obs:1",),
+            superseded_by_evidence_id="obs:2",
+            stale_reason="superseded",
+            stale_at="2026-08-13T00:00:00Z",
+            evidence_family_key="family:1",
+        )
+
+        self.assertEqual(("obs:1",), updated)
+        stored = repository.find_by_run("run:1")[0]
+        self.assertEqual(ObservationStatus.STALE, stored.status)
+        self.assertEqual("obs:2", stored.superseded_by_evidence_id)
+        self.assertEqual("family:1", stored.evidence_family_key)
+
+    def test_marks_interpretation_stale(self):
+        repository = InMemorySemanticEvidenceRepository()
+        repository.save_interpretations((block_interpretation(),))
+
+        updated = repository.mark_evidence_stale(
+            ("interpretation:1",),
+            superseded_by_evidence_id="interpretation:2",
+            stale_reason="superseded",
+            stale_at="2026-08-13T00:00:00Z",
+            evidence_family_key="family:1",
+        )
+
+        self.assertEqual(("interpretation:1",), updated)
+        stored = repository.find_interpretations(element_id="block:1")[0]
+        self.assertEqual("stale", stored.analysis_status.value)
+
+    def test_rejects_invalid_inputs(self):
+        repository = InMemorySemanticEvidenceRepository()
+        repository.save_observations((observation(),))
+        with self.assertRaises(ToolModelError):
+            repository.mark_evidence_stale(
+                "obs:1",
+                superseded_by_evidence_id="obs:2",
+                stale_reason="r",
+                stale_at="t",
+                evidence_family_key="family:1",
+            )
+        with self.assertRaises(ToolModelError):
+            repository.mark_evidence_stale(
+                ("obs:1",),
+                superseded_by_evidence_id="obs:2",
+                stale_reason="",
+                stale_at="t",
+                evidence_family_key="family:1",
+            )
+
+    def test_unknown_evidence_ids_are_skipped(self):
+        repository = InMemorySemanticEvidenceRepository()
+        updated = repository.mark_evidence_stale(
+            ("obs:missing",),
+            superseded_by_evidence_id="obs:2",
+            stale_reason="r",
+            stale_at="t",
+            evidence_family_key="family:1",
+        )
+        self.assertEqual((), updated)
 
 
 if __name__ == "__main__":
