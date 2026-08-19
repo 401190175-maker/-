@@ -315,7 +315,7 @@ class RetrievalBundleBuilder:
                             page_id=item.page_id,
                             block_id=item.block_id,
                         ),
-                        value=_to_plain(item),
+                        value=_candidate_relation_value(item),
                         source_call_id=source_call_id,
                         status=item.status,
                         recognition_run_id=item.recognition_run_id,
@@ -610,11 +610,32 @@ def _bbox_mapping(bbox: object) -> dict[str, float]:
 
 
 def _relation_direction(item: object) -> str | None:
-    source = getattr(item, "block_id", None) or getattr(item, "cross_section_id", None)
+    source = (
+        getattr(item, "source_element_id", None)
+        or getattr(item, "block_id", None)
+        or getattr(item, "cross_section_id", None)
+    )
     if source is None:
         return None
     target = getattr(item, "relation_type", None)
     return f"{source}->{target or 'target'}"
+
+
+def _candidate_relation_value(item: object) -> dict[str, object]:
+    """Enrich candidate summaries with the 05 normalization contract fields.
+
+    ``subject/predicate/objects`` 是候选关系参与比较/冲突分组的稳定结构；
+    source 缺失时回退到 block_id，target 缺失时 objects 为空元组，不猜测
+    方向也不把候选提升为正式关系。
+    """
+
+    value = _to_plain(item)
+    source = getattr(item, "source_element_id", None)
+    target = getattr(item, "target_element_id", None)
+    value["subject"] = source or getattr(item, "block_id", None)
+    value["predicate"] = getattr(item, "relation_type", None)
+    value["objects"] = (target,) if target else ()
+    return value
 
 
 def _to_plain(value: object) -> object:

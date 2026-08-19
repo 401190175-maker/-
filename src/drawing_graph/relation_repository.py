@@ -441,6 +441,8 @@ def _candidate_relation_query() -> str:
         "RETURN coalesce(properties.candidate_group_id, start_id + ':' + end_id + ':' + coalesce(properties.rule_version, 'unknown')) AS candidate_group_id,\n"
         "       page.id AS page_id,\n"
         "       block_id AS block_id,\n"
+        "       start_id AS source_element_id,\n"
+        "       end_id AS target_element_id,\n"
         "       relation_type AS relation_type,\n"
         "       coalesce(properties.status, properties.review_status, 'candidate') AS status,\n"
         "       properties.score AS score,\n"
@@ -459,6 +461,8 @@ def _candidate_relation_query() -> str:
         "RETURN coalesce(properties.candidate_group_id, start_id + ':' + end_id + ':' + coalesce(properties.rule_version, 'unknown')) AS candidate_group_id,\n"
         "       page.id AS page_id,\n"
         "       block_id AS block_id,\n"
+        "       start_id AS source_element_id,\n"
+        "       end_id AS target_element_id,\n"
         "       relation_type AS relation_type,\n"
         "       coalesce(properties.status, properties.review_status, 'candidate') AS status,\n"
         "       properties.score AS score,\n"
@@ -525,6 +529,8 @@ def _candidate_summary_from_record(record: Any) -> CandidateRelationSummary:
         conflict_reason=_record_value_or_none(record, "conflict_reason"),
         evidence_ids=_text_tuple(_record_value_or_none(record, "evidence_ids") or ()),
         recognition_run_id=_record_value_or_none(record, "recognition_run_id"),
+        source_element_id=_record_value_or_none(record, "source_element_id"),
+        target_element_id=_record_value_or_none(record, "target_element_id"),
     )
 
 

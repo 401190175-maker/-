@@ -217,6 +217,39 @@ DashScope key，产品问答仍固定只读，不提供写回入口。
 | live Neo4j 语义写入 | 未验证（本轮不写回） |
 | 真实 Codex 宿主注册 | 未验证（工具发现仍未挂载到会话，需完全重启后验证） |
 
+## 候选关系归一化修复（2026-08-19）
+
+### 根因
+
+`road_68` 候选关系页查询此前返回 partial：6 条候选 evidence 在 05 融合层被隔离
+（`evidence_normalization_failed`），`possible_relation` 无法形成 claim。原因是 02
+检索投影生成的候选 `EvidenceItem.value` 缺少归一化契约要求的
+`subject`/`source_target_id`，`_normalize_relation` 返回 None，全部候选被隔离。
+
+### 修复
+
+- `src/drawing_graph/tool_models.py`：`CandidateRelationSummary` 增加可选
+  `source_element_id`/`target_element_id`。
+- `src/drawing_graph/relation_repository.py`：候选查询把已算出的 `start_id`/`end_id`
+  一并 RETURN 为 source/target 元素 ID，并映射进 DTO。
+- `src/drawing_graph/assistant_retrieval_projection.py`：候选 value 补
+  `subject`（source，缺省回退 block_id）、`predicate`（relation_type）、
+  `objects`（target，缺省空元组）；direction 优先使用 source。
+- 边界保持：候选保持 `candidate_relation` fact_kind，不被提升为正式关系；
+  查询全程只读，不触发写回。
+
+### 验证（2026-08-19）
+
+- 离线：相关回归 309 项 OK；全量 `python -m unittest discover tests` 为
+  `Ran 2756 tests`，`OK (skipped=5)`（5 项 live Neo4j 集成按设计跳过）。
+- live（本机 `.env` 加载、只读）：
+  - 产品 CLI：`候选关系` + `page:road-project:lslq_yhd_2_2:road_68` 返回
+    `status=answered`，1 条 `possible_relation` claim
+    （`fact_kinds=["candidate_relation"]`），6 条候选引用与 citation
+    （含 candidate_group_id），`warnings=[]`、`unsupported_parts=[]`。
+  - 产品 MCP STDIO smoke（与注册命令相同）：同样 `answered`，候选保持候选语义，
+    没有提升为正式关系。
+
 ## 边界确认
 
 - 产品 HTTP/MCP adapter 只调用 `DrawingAssistantService.answer()`，不直接访问 Neo4j driver、

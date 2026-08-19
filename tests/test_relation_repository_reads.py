@@ -273,6 +273,8 @@ class RelationRepositoryReadsTest(unittest.TestCase):
                     "conflict_reason": None,
                     "evidence_ids": ["obs:1"],
                     "recognition_run_id": "run:1",
+                    "source_element_id": "caption:1",
+                    "target_element_id": "block:1",
                 },
             )
         )
@@ -285,6 +287,8 @@ class RelationRepositoryReadsTest(unittest.TestCase):
         self.assertEqual("caption:1:block:1:v1", candidates[0].candidate_group_id)
         self.assertEqual("candidate_caption_of", candidates[0].relation_type)
         self.assertEqual(("obs:1",), candidates[0].evidence_ids)
+        self.assertEqual("caption:1", candidates[0].source_element_id)
+        self.assertEqual("block:1", candidates[0].target_element_id)
         cypher, parameters = driver.sessions[0].transaction.calls[0]
         self.assertIn("CANDIDATE_CAPTION_OF", cypher)
         self.assertIn("CANDIDATE_HAS_SECTION_MARK", cypher)

@@ -212,6 +212,8 @@ class CandidateRelationSummary:
     evidence_ids: tuple[str, ...] = ()
     recognition_run_id: str | None = None
     fact_kind: str = "candidate"
+    source_element_id: str | None = None
+    target_element_id: str | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("candidate_group_id", "page_id", "block_id", "relation_type", "status"):
@@ -224,6 +226,8 @@ class CandidateRelationSummary:
         _require_optional_text(self.recognition_run_id, "recognition_run_id")
         if self.fact_kind != "candidate":
             raise ToolModelError("invalid_fact_kind", "candidate relation summaries must use fact_kind='candidate'")
+        _require_optional_text(self.source_element_id, "source_element_id")
+        _require_optional_text(self.target_element_id, "target_element_id")
         object.__setattr__(self, "evidence_ids", _read_text_tuple(self.evidence_ids, "evidence_ids"))
 
 

@@ -24,6 +24,7 @@ from drawing_graph.tool_models import (
     BBox,
     BlockRelations,
     BlockTrace,
+    CandidateRelationSummary,
     DrawingSetSummary,
     ElementEvidence,
     PageSourceFacts,
@@ -717,6 +718,81 @@ class RetrievalBundleBuilderRelationSemanticTests(unittest.TestCase):
         self.assertEqual("group:3", metadata["candidate_group_id"])
         self.assertEqual("candidate_caption_of", metadata["relation_type"])
         self.assertEqual("block:1->candidate_caption_of", metadata["direction"])
+
+    def test_candidate_relations_carry_subject_predicate_objects(self):
+        requirement = make_requirement(
+            EvidenceType.CANDIDATE_RELATIONS,
+            AssistantScope(page_id="page:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "list_candidate_relations",
+                    requirement.requirement_id,
+                    {"page_id": "page:1", "block_id": None, "relation_type": None, "status": None},
+                    AssistantScope(page_id="page:1"),
+                ),
+            ),
+        )
+        candidate = make_candidate_summary("group:4")
+        candidate = CandidateRelationSummary(
+            candidate_group_id=candidate.candidate_group_id,
+            page_id=candidate.page_id,
+            block_id=candidate.block_id,
+            relation_type=candidate.relation_type,
+            status=candidate.status,
+            score=candidate.score,
+            recognition_run_id=candidate.recognition_run_id,
+            source_element_id="caption:1",
+            target_element_id="block:1",
+        )
+        raw = RawRetrievalResult(results={"step:1": (candidate,)})
+        calls = (make_call("step:1", "list_candidate_relations", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        value = bundle.candidate_relations[0].value
+        self.assertEqual("caption:1", value["subject"])
+        self.assertEqual("candidate_caption_of", value["predicate"])
+        self.assertEqual(("block:1",), value["objects"])
+
+    def test_candidate_relations_fallback_subject_to_block_id(self):
+        requirement = make_requirement(
+            EvidenceType.CANDIDATE_RELATIONS,
+            AssistantScope(page_id="page:1"),
+        )
+        plan = RetrievalPlan(
+            request_id="req:1",
+            steps=(
+                make_step(
+                    "step:1",
+                    "list_candidate_relations",
+                    requirement.requirement_id,
+                    {"page_id": "page:1", "block_id": None, "relation_type": None, "status": None},
+                    AssistantScope(page_id="page:1"),
+                ),
+            ),
+        )
+        candidate = make_candidate_summary("group:5")
+        raw = RawRetrievalResult(results={"step:1": (candidate,)})
+        calls = (make_call("step:1", "list_candidate_relations", 1),)
+
+        bundle = RetrievalBundleBuilder().build(
+            make_result(requirement),
+            plan,
+            raw,
+            calls,
+        )
+        value = bundle.candidate_relations[0].value
+        self.assertEqual("block:1", value["subject"])
+        self.assertEqual("candidate_caption_of", value["predicate"])
+        self.assertEqual((), value["objects"])
 
     def test_derived_relations_carry_relation_type_and_direction(self):
         requirement = make_requirement(
