@@ -111,5 +111,54 @@ class SearchPagesCliTests(unittest.TestCase):
         self.assertEqual(payload["data"]["matches"][0]["page_id"], "page:1")
 
 
+class RecognitionBackfillTests(unittest.TestCase):
+    def test_recognizes_unrecognized_page_then_matches(self) -> None:
+        class _RecognitionFacade(_FakeFacade):
+            def __init__(self, pages):
+                super().__init__(pages)
+                self.recognized: list[str] = []
+
+            def get_page_source_facts(self, page_id, element_types=None, include_image_meta=True):
+                return type("F", (), {"elements": ()})()
+
+            def list_text_observations(self, page_id=None, element_id=None, recognition_run_id=None, statuses=None, write_back=False):
+                if page_id == "page:1":
+                    return (
+                        type(
+                            "O",
+                            (),
+                            {
+                                "raw_text": "道路平面图",
+                                "normalized_text": "道路平面图",
+                                "target_element_id": "element:1",
+                            },
+                        )(),
+                    )
+                if page_id == "page:2" and "page:2" in self.recognized:
+                    return (
+                        type(
+                            "O",
+                            (),
+                            {
+                                "raw_text": "排水管道",
+                                "normalized_text": "排水管道",
+                                "target_element_id": "element:o",
+                            },
+                        )(),
+                    )
+                raise ToolModelError("NOT_FOUND", "no observations")
+
+            def recognize_page_semantics(self, page_id, target_types, model_profile="default", prompt_version="default", write_back=False):
+                self.recognized.append(page_id)
+                return object()
+
+        facade = _RecognitionFacade([_page(1), _page(2)])
+        service = PageContentSearchService(facade, page_batch_size=1)
+        result = service.search("set:1", "排水", allow_recognition=True, recognize_page_limit=1)
+        self.assertEqual([m.page_id for m in result.matches], ["page:2"])
+        self.assertEqual(facade.recognized, ["page:2"])
+        self.assertEqual(result.coverage.recognized_now, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

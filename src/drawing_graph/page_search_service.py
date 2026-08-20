@@ -66,18 +66,35 @@ class PageContentSearchService:
         allow_recognition: bool = False,
         recognize_page_limit: int = 10,
     ) -> PageSearchResult:
-        """Search one drawing set; recognition hook is added in a later task."""
+        """Search one drawing set, optionally backfilling unrecognized pages."""
 
-        del allow_recognition, recognize_page_limit
         if not self._matcher.query_tokens(query):
             raise ToolModelError("INVALID_ARGUMENT", "query must contain at least one search token")
         pages = self._enumerate_pages(drawing_set_id)
         matches: list[PageSearchMatch] = []
         from_cache = 0
+        recognized_now = 0
+        skipped = 0
+        recognition_budget = max(0, recognize_page_limit)
         for page in pages:
             content = self._collector.collect(page)
             if content.has_semantic_content:
                 from_cache += 1
+            elif allow_recognition and recognition_budget > 0:
+                recognized_now += 1
+                recognition_budget -= 1
+                try:
+                    self._facade.recognize_page_semantics(
+                        page.page_id,
+                        target_types=("block", "text"),
+                        write_back=False,
+                    )
+                    content = self._collector.collect(page)
+                except Exception:
+                    recognized_now -= 1
+                    skipped += 1
+            elif not content.has_semantic_content:
+                skipped += 1
             hit_items = [
                 item
                 for item in content.items
@@ -104,6 +121,8 @@ class PageContentSearchService:
                 total_pages=len(pages),
                 scanned=len(pages),
                 from_cache=from_cache,
+                recognized_now=recognized_now,
+                skipped=skipped,
             ),
         )
 
