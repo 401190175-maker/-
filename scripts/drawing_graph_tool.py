@@ -128,6 +128,11 @@ def _build_parser() -> argparse.ArgumentParser:
     search_pages.add_argument("--query", required=True)
     search_pages.add_argument("--allow-recognition", action="store_true")
     search_pages.add_argument("--recognize-page-limit", type=int, default=10)
+    search_pages.add_argument(
+        "--write-back",
+        action="store_true",
+        help="Explicitly authorize persisting recognition cache.",
+    )
 
     return parser
 
@@ -207,6 +212,7 @@ def _run_selected_command(facade: Any, args: argparse.Namespace) -> Any:
             args.query,
             allow_recognition=args.allow_recognition,
             recognize_page_limit=args.recognize_page_limit,
+            write_back=args.write_back,
         )
     raise ValueError(f"unsupported tool command: {args.command}")
 

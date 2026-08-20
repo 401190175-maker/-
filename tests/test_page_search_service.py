@@ -160,5 +160,57 @@ class RecognitionBackfillTests(unittest.TestCase):
         self.assertEqual(result.coverage.recognized_now, 1)
 
 
+class CacheWriteAuthorizationTests(unittest.TestCase):
+    def test_cli_write_back_flag_forwards_to_recognition(self) -> None:
+        import io
+        import sys
+
+        import scripts.drawing_graph_tool as cli
+
+        class _Config:
+            neo4j_uri = "bolt://127.0.0.1:7687"
+            neo4j_user = "neo4j"
+            neo4j_password = "x"
+
+        class _Driver:
+            pass
+
+        calls: list[dict[str, object]] = []
+
+        class _RecordingFacade(_FakeFacade):
+            def get_page_source_facts(self, page_id, element_types=None, include_image_meta=True):
+                return type("F", (), {"elements": ()})()
+
+            def list_text_observations(self, page_id=None, element_id=None, recognition_run_id=None, statuses=None, write_back=False):
+                raise ToolModelError("NOT_FOUND", "no observations")
+
+            def recognize_page_semantics(self, page_id, target_types, model_profile="default", prompt_version="default", write_back=False):
+                calls.append({"page_id": page_id, "write_back": write_back})
+                return object()
+
+        captured = io.StringIO()
+        original = sys.stdout
+        sys.stdout = captured
+        try:
+            code = cli.main(
+                [
+                    "search-pages",
+                    "--drawing-set-id",
+                    "set:1",
+                    "--query",
+                    "排水",
+                    "--allow-recognition",
+                    "--write-back",
+                ],
+                config_loader=lambda: _Config(),
+                driver_factory=lambda uri, auth: _Driver(),
+                facade_factory=lambda driver: _RecordingFacade([_page(1)]),
+            )
+        finally:
+            sys.stdout = original
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0]["write_back"], True)
+
+
 if __name__ == "__main__":
     unittest.main()

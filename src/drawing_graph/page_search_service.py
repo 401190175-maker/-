@@ -65,6 +65,7 @@ class PageContentSearchService:
         *,
         allow_recognition: bool = False,
         recognize_page_limit: int = 10,
+        write_back: bool = False,
     ) -> PageSearchResult:
         """Search one drawing set, optionally backfilling unrecognized pages."""
 
@@ -87,7 +88,7 @@ class PageContentSearchService:
                     self._facade.recognize_page_semantics(
                         page.page_id,
                         target_types=("block", "text"),
-                        write_back=False,
+                        write_back=write_back,
                     )
                     content = self._collector.collect(page)
                 except Exception:
