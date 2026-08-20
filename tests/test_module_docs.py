@@ -180,7 +180,7 @@ class ModuleProductAdapterDocsTest(unittest.TestCase):
             "DrawingAssistantService.answer()",
             "write_back=false",
             "候选关系不是正式事实",
-            "外部产品级 Web UI 与反馈入口",
+            "外部产品级 Web UI",
         ):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, self.module_doc)

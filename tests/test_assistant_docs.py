@@ -47,7 +47,7 @@ class AssistantDocsTests(unittest.TestCase):
         # 同时锁定已完成能力和仍未实现的外部入口，避免状态再次倒退。
         self.assertIn("`DrawingAssistantService` 与产品级只读 CLI 已在 06/07 MVP 中实现", self.readme)
         self.assertIn("产品级只读 HTTP/MCP 问答 adapter 已实现", self.readme)
-        self.assertIn("外部产品级 Web UI 与反馈入口", self.readme)
+        self.assertIn("外部产品级 Web UI", self.readme)
         self.assertIn("外部持久化 store", self.readme)
         self.assertNotIn("完整 DrawingAssistantService 尚未实现", self.readme)
 
@@ -75,7 +75,7 @@ class AssistantDocsTests(unittest.TestCase):
         # 架构层描述整体产品链路，因此允许显式配置 Qwen，但不得默认调用。
         self.assertIn("DrawingAssistantService（07 只读总编排，已实现）", self.architecture)
         self.assertIn("FeedbackService（08）", self.architecture)
-        self.assertIn("外部产品级 Web UI 与反馈入口", self.architecture)
+        self.assertIn("外部产品级 Web UI", self.architecture)
         self.assertIn("不默认调用 Qwen", self.architecture)
         self.assertNotIn("DrawingAssistantService（后续完整产品编排，当前未实现）", self.architecture)
         for phrase in BOUNDARY_PHRASES:
