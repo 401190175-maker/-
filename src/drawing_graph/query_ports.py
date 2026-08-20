@@ -13,7 +13,7 @@ class DrawingGraphReadPort(Protocol):
     def list_drawing_sets(self, project_id: str, limit: int = 100) -> list[DrawingSetSummary]:
         """Return drawing set summaries for one project."""
 
-    def list_pages(self, drawing_set_id: str, limit: int = 100) -> list[PageSummary]:
+    def list_pages(self, drawing_set_id: str, limit: int = 100, offset: int = 0) -> list[PageSummary]:
         """Return page summaries for one drawing set."""
 
     def get_page_source_facts(
@@ -52,8 +52,9 @@ class FakeDrawingGraphReadPort:
     def list_drawing_sets(self, project_id: str, limit: int = 100) -> list[DrawingSetSummary]:
         return [item for item in self._drawing_sets if item.project_id == project_id][:limit]
 
-    def list_pages(self, drawing_set_id: str, limit: int = 100) -> list[PageSummary]:
-        return [item for item in self._pages if item.drawing_set_id == drawing_set_id][:limit]
+    def list_pages(self, drawing_set_id: str, limit: int = 100, offset: int = 0) -> list[PageSummary]:
+        filtered = [item for item in self._pages if item.drawing_set_id == drawing_set_id]
+        return filtered[offset : offset + limit]
 
     def get_page_source_facts(
         self,

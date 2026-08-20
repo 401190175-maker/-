@@ -72,6 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
     pages = subparsers.add_parser("list-pages", help="List pages for one drawing set.")
     pages.add_argument("--drawing-set-id", required=True)
     pages.add_argument("--limit", type=int, default=100)
+    pages.add_argument("--offset", type=int, default=0)
 
     source_facts = subparsers.add_parser("page-source-facts", help="Return page source facts.")
     source_facts.add_argument("--page-id", required=True)
@@ -139,7 +140,7 @@ def _run_selected_command(facade: Any, args: argparse.Namespace) -> Any:
     if args.command == "list-drawing-sets":
         return facade.list_drawing_sets(args.project_id, limit=args.limit)
     if args.command == "list-pages":
-        return facade.list_pages(args.drawing_set_id, limit=args.limit)
+        return facade.list_pages(args.drawing_set_id, limit=args.limit, offset=args.offset)
     if args.command == "page-source-facts":
         element_types = tuple(args.element_types) if args.element_types else None
         return facade.get_page_source_facts(

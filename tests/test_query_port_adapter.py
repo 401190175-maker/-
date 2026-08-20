@@ -13,7 +13,7 @@ class FakeQueryService:
     def get_project_sets(self, project_id, limit=100):
         return [{"id": "set:1", "name": "set", "page_count": 2, "neo4j_label": "DrawingSet"}]
 
-    def get_set_pages(self, drawing_set_id, limit=100):
+    def get_set_pages(self, drawing_set_id, limit=100, offset=0):
         return [{"id": "page:1", "file_name": "road_24.json", "page_number": 24, "image_path": "road_24.png"}]
 
     def get_block_trace(self, block_id):

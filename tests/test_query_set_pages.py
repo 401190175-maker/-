@@ -135,11 +135,19 @@ class QuerySetPagesTest(unittest.TestCase):
         self.assertIn("page.page_number AS page_number", cypher)
         self.assertIn("page.image_path AS image_path", cypher)
         self.assertIn("ORDER BY page.page_number ASC", cypher)
+        self.assertIn("SKIP $offset", cypher)
         self.assertIn("LIMIT $limit", cypher)
         self.assertNotIn("set:road-project:lslq_yhd_2_1", cypher)
         self.assertNotIn("id(page)", cypher)
         self.assertNotIn("elementId", cypher)
-        self.assertEqual({"drawing_set_id": "set:road-project:lslq_yhd_2_1", "limit": 5}, parameters)
+        self.assertEqual(
+            {
+                "drawing_set_id": "set:road-project:lslq_yhd_2_1",
+                "limit": 5,
+                "offset": 0,
+            },
+            parameters,
+        )
 
 
 if __name__ == "__main__":

@@ -30,15 +30,26 @@ class QueryService:
                 lambda transaction: _get_project_sets(transaction, project_id, result_limit)
             )
 
-    def get_set_pages(self, drawing_set_id: str, limit: int = 100) -> list[dict[str, object]]:
+    def get_set_pages(
+        self,
+        drawing_set_id: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, object]]:
         """Return pages that belong to a drawing set ordered by page number."""
 
         _require_text(drawing_set_id, "drawing_set_id")
         result_limit = _require_positive_int(limit, "limit")
+        result_offset = _require_non_negative_int(offset, "offset")
 
         with self.driver.session() as session:
             return session.execute_read(
-                lambda transaction: _get_set_pages(transaction, drawing_set_id, result_limit)
+                lambda transaction: _get_set_pages(
+                    transaction,
+                    drawing_set_id,
+                    result_limit,
+                    result_offset,
+                )
             )
 
     def get_page_blocks(self, page_id: str, limit: int = 100) -> list[dict[str, object]]:
@@ -98,7 +109,12 @@ def _get_project_sets(transaction: Any, project_id: str, limit: int) -> list[dic
     ]
 
 
-def _get_set_pages(transaction: Any, drawing_set_id: str, limit: int) -> list[dict[str, object]]:
+def _get_set_pages(
+    transaction: Any,
+    drawing_set_id: str,
+    limit: int,
+    offset: int,
+) -> list[dict[str, object]]:
     cypher = (
         "MATCH (drawing_set:DrawingSet {id: $drawing_set_id})-[:HAS_PAGE]->(page:DrawingPage)\n"
         "RETURN page.id AS id,\n"
@@ -106,9 +122,15 @@ def _get_set_pages(transaction: Any, drawing_set_id: str, limit: int) -> list[di
         "       page.page_number AS page_number,\n"
         "       page.image_path AS image_path\n"
         "ORDER BY page.page_number ASC, page.file_name ASC, page.id ASC\n"
+        "SKIP $offset\n"
         "LIMIT $limit"
     )
-    records = transaction.run(cypher, drawing_set_id=drawing_set_id, limit=limit)
+    records = transaction.run(
+        cypher,
+        drawing_set_id=drawing_set_id,
+        limit=limit,
+        offset=offset,
+    )
     return [
         {
             "id": _record_value(record, "id"),
@@ -395,6 +417,12 @@ def _require_text(value: Any, field_name: str) -> str:
 def _require_positive_int(value: Any, field_name: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise QueryError("invalid_limit", f"{field_name} must be a positive integer")
+    return value
+
+
+def _require_non_negative_int(value: Any, field_name: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise QueryError("invalid_offset", f"{field_name} must be a non-negative integer")
     return value
 
 

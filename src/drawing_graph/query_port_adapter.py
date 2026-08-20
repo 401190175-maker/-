@@ -36,8 +36,10 @@ class QueryServiceReadPortAdapter:
             for row in rows
         ]
 
-    def list_pages(self, drawing_set_id: str, limit: int = 100) -> list[PageSummary]:
-        rows = self._call(lambda: self.query_service.get_set_pages(drawing_set_id, limit))
+    def list_pages(self, drawing_set_id: str, limit: int = 100, offset: int = 0) -> list[PageSummary]:
+        rows = self._call(
+            lambda: self.query_service.get_set_pages(drawing_set_id, limit, offset)
+        )
         return [
             PageSummary(
                 drawing_set_id=drawing_set_id,

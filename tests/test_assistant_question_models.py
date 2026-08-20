@@ -31,6 +31,7 @@ class QuestionTypeTests(unittest.TestCase):
                 "drawing_diagnostic",
                 "source_trace",
                 "comparison",
+                "page_content_search",
                 "clarification_required",
                 "unknown_or_unsupported",
             },

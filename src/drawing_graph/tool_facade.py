@@ -69,10 +69,13 @@ class DrawingGraphToolFacade:
         self,
         drawing_set_id: str,
         limit: int = 100,
+        offset: int = 0,
         write_back: bool = False,
     ) -> list[PageSummary]:
         _reject_write_back(write_back)
-        return self._read_call(lambda: self.read_port.list_pages(drawing_set_id, limit))
+        return self._read_call(
+            lambda: self.read_port.list_pages(drawing_set_id, limit, offset)
+        )
 
     def get_page_source_facts(
         self,
