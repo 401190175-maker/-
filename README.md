@@ -94,6 +94,8 @@ Neo4j Browser 常见地址是 `http://localhost:7474/browser/`，它只用于浏
    python scripts\skill_preflight.py
    ```
 
+   启动 Neo4j（幂等，等待 Bolt 就绪）：`powershell -ExecutionPolicy Bypass -File scripts\start_neo4j.ps1`；产品 MCP 启动脚本 `scripts\start_drawing_assistant_mcp.ps1` 会在启动 server 前自动拉起本机 Neo4j，无需手动启动。
+
 5. **按顺序初始化**：执行第 4 节 Schema 初始化、第 5 节导入数据、第 6 节离线派生关系增强，之后才能进行查询/问答。
 
 安全边界：`.env` 含真实凭据，已被 gitignore，不要改名或复制到可提交路径；`.env.example` 只放占位符，可安全提交；不要在任何文档、日志、命令输出或 issue 中粘贴真实密码或 API key。
@@ -267,6 +269,15 @@ python scripts\drawing_graph_tool.py list-interpretations --page-id page:road-pr
 python scripts\drawing_graph_tool.py list-candidate-relations --block-id block:road-project:lslq_yhd_2_1:road_24:<shape_hash> --relation-type candidate_section_mark --status candidate
 python scripts\drawing_graph_tool.py list-section-matches --cross-section-id element:road-project:lslq_yhd_2_1:road_24:<shape_hash> --status candidate --status confirmed
 ```
+
+搜索图纸册页内容（只读）：
+
+```powershell
+python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-project:lslq_yhd_2_2 --query 排水
+python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-project:lslq_yhd_2_2 --query 排水 --allow-recognition
+```
+
+`search-pages` 返回命中页（`matches`，含命中片段与元素 ID）与 `coverage`（扫描/缓存/本次识别/跳过）。`--allow-recognition` 对无缓存观察的页面按需识别，默认 dry-run；显式持久化识别缓存需追加 `--write-back`。无命中返回 `NOT_FOUND` 是正常状态。
 
 `recognize-page-semantics` 默认 `write_back=false`，只返回本次临时 `recognition_run_id`、observation 和 interpretation；只有显式传入 `--write-back` 才会通过 facade 进入受控语义证据写回流程。使用 Qwen 时需要当前进程已配置 `DRAWING_GRAPH_RECOGNITION_PROVIDER=qwen` 和 `DASHSCOPE_API_KEY`，命令参数和输出不会包含真实 API key。
 

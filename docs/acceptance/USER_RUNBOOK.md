@@ -12,6 +12,14 @@
 python -m pip install -r requirements.txt
 ```
 
+启动 Neo4j（幂等，等待 Bolt 就绪）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start_neo4j.ps1
+```
+
+产品 MCP 入口 `scripts\start_drawing_assistant_mcp.ps1` 已内置自动启动 Neo4j，使用注册的 MCP server 时无需手动启动。
+
 启动 Neo4j 后，区分两个地址：
 
 - Neo4j Browser：`http://localhost:7474/browser/`
@@ -121,6 +129,14 @@ python scripts\drawing_graph_tool.py list-interpretations --page-id page:road-pr
 python scripts\drawing_graph_tool.py list-candidate-relations --block-id block:road-project:lslq_yhd_2_1:road_24:<shape_hash> --relation-type candidate_section_mark --status candidate
 python scripts\drawing_graph_tool.py list-section-matches --cross-section-id element:road-project:lslq_yhd_2_1:road_24:<shape_hash> --status candidate --status confirmed
 ```
+
+搜索页内容：
+
+```powershell
+python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-project:lslq_yhd_2_2 --query 排水
+```
+
+返回 `matches`（命中页 + 命中片段）与 `coverage`（扫描/缓存/本次识别/跳过）；无命中返回 `NOT_FOUND` 是正常状态。`--allow-recognition` 按需识别未缓存页面（默认 dry-run），显式持久化缓存需 `--write-back`。
 
 这些命令输出 JSON。成功时 `status` 为 `ok`；查不到数据时通常返回 `NOT_FOUND`。
 
