@@ -77,7 +77,16 @@ def _default_driver_factory(uri: str, auth: tuple[str, str]) -> Any:
 
 
 _default_facade_factory = create_neo4j_tool_facade
-_default_service_factory = create_drawing_assistant_service
+
+
+def _default_service_factory(facade: Any, **kwargs: Any) -> Any:
+    from .question_understanding_client import question_understanding_client_from_env
+
+    kwargs.setdefault(
+        "question_understanding_client",
+        question_understanding_client_from_env(),
+    )
+    return create_drawing_assistant_service(facade, **kwargs)
 
 
 def _close_quietly(driver: Any) -> None:

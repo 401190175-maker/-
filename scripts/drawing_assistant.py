@@ -156,8 +156,17 @@ def main(
 
     if service_factory is None:
         from drawing_graph.drawing_assistant_factory import create_drawing_assistant_service
+        from drawing_graph.question_understanding_client import (
+            question_understanding_client_from_env,
+        )
 
-        service_factory = create_drawing_assistant_service
+        def _assistant_service_factory(facade):
+            return create_drawing_assistant_service(
+                facade,
+                question_understanding_client=question_understanding_client_from_env(),
+            )
+
+        service_factory = _assistant_service_factory
 
     parser = build_parser()
     try:

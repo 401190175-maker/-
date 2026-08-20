@@ -20,6 +20,7 @@ def create_drawing_assistant_service(
     facade: object,
     text_generator: object | None = None,
     question_service: object | None = None,
+    question_understanding_client: object | None = None,
     retrieval_service: object | None = None,
     gap_decision_service: object | None = None,
     fusion_service: object | None = None,
@@ -29,7 +30,9 @@ def create_drawing_assistant_service(
 ) -> DrawingAssistantService:
     """装配默认 01—07 服务，无外部副作用。"""
 
-    question_service = question_service or QuestionUnderstandingService()
+    question_service = question_service or QuestionUnderstandingService(
+        model_client=question_understanding_client,
+    )
     retrieval_service = retrieval_service or GraphRetrievalService(facade)
     gap_decision_service = gap_decision_service or SemanticGapDecisionService()
     fusion_service = fusion_service or create_evidence_fusion_service()
