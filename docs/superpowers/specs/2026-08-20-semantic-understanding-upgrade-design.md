@@ -73,7 +73,7 @@
 - `SynonymExpansionMatcher.query_tokens()` 返回展开后的 token 集合；`matches()` 任一展开命中即 True。
 - `TextEmbeddingClient.embed(texts) -> list[list[float]]`；`HybridScorer.score(lexical_hits, semantic_hits) -> tuple[PageSearchMatch, ...]`。
 - 检索结果新增可选字段 `semantic: bool`（二期），coverage 新增 `embedded_pages`/`embedded_now`。
-- LLM 兜底失败原因码：`reason_codes` 增加 `question_understanding_fallback_failed`。
+- LLM 兜底失败原因码：`QuestionUnderstandingResult` 无 `reason_codes` 字段，改在 `unsupported_parts` 中追加 `question_understanding_fallback_failed`。
 
 ## 7. 错误处理与边界
 

@@ -17,20 +17,13 @@ from .assistant_models import (
     AssistantSubrequest,
     QuestionType,
     QuestionUnderstandingResult,
+    ReasonCode,
 )
 from .assistant_question_llm import QuestionUnderstandingModelClient
-from .assistant_question_rules import RuleQuestionRouter
+from .assistant_question_rules import QuestionRouteResult, RuleQuestionRouter
 from .assistant_question_text import QuestionTextNormalizer
 from .assistant_question_trace import QuestionUnderstandingTraceBuilder
 from .assistant_scope_resolution import ScopeResolver
-
-
-_LLM_FALLBACK_TYPES = frozenset(
-    {
-        QuestionType.PAGE_CONTENT_SEARCH.value,
-    }
-)
-
 
 class QuestionUnderstandingService:
     """问题理解闭环入口：把请求稳定转换为下游可消费的结果。"""
@@ -69,7 +62,6 @@ class QuestionUnderstandingService:
             request.conversation_context,
         )
         route_result = self.router.route(normalized, scope_result.scope)
-        scope = scope_result.scope
 
         if route_result.question_type == QuestionType.UNKNOWN_OR_UNSUPPORTED.value:
             if self.model_client is not None:
@@ -78,27 +70,46 @@ class QuestionUnderstandingService:
                         normalized,
                         scope_result.scope,
                     )
-                    if candidate.question_type in _LLM_FALLBACK_TYPES:
-                        return QuestionUnderstandingResult(
-                            request_id=request.request_id,
+                    if candidate.question_type != QuestionType.UNKNOWN_OR_UNSUPPORTED.value:
+                        synthetic = QuestionRouteResult(
                             question_type=candidate.question_type,
-                            scope=scope,
                             confidence=candidate.confidence,
                             ambiguities=candidate.ambiguities,
                             unsupported_parts=candidate.unsupported_parts,
                         )
+                        return self._complete_route(
+                            request,
+                            synthetic,
+                            scope_result,
+                            normalized,
+                        )
                 except Exception:
                     pass
+            fallback_reason = ReasonCode.QUESTION_UNDERSTANDING_FALLBACK_FAILED.value
+            base_parts = route_result.unsupported_parts or ("question_type",)
             return QuestionUnderstandingResult(
                 request_id=request.request_id,
                 question_type=QuestionType.UNKNOWN_OR_UNSUPPORTED.value,
-                scope=scope,
+                scope=scope_result.scope,
                 confidence=route_result.confidence,
                 ambiguities=route_result.ambiguities,
-                unsupported_parts=route_result.unsupported_parts
-                or ("question_type",),
+                unsupported_parts=tuple(
+                    dict.fromkeys((*base_parts, fallback_reason))
+                ),
             )
 
+        return self._complete_route(request, route_result, scope_result, normalized)
+
+    def _complete_route(
+        self,
+        request: AssistantRequest,
+        route_result: QuestionRouteResult,
+        scope_result: ScopeResolutionResult,
+        normalized: str,
+    ) -> QuestionUnderstandingResult:
+        """Run the post-route pipeline (split/evidence/clarify) for one route."""
+
+        scope = scope_result.scope
         subrequests = self.splitter.split(normalized, route_result, scope)
         if len(subrequests) > 1:
             return self._multi_intent_result(request, subrequests, scope)

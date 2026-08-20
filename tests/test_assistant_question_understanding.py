@@ -94,5 +94,51 @@ class QuestionUnderstandingServiceTests(unittest.TestCase):
             self.assertNotIn(token, source)
 
 
+class LlmFallbackTests(unittest.TestCase):
+    def test_llm_fallback_adopts_any_valid_type_with_evidence(self) -> None:
+        from drawing_graph.assistant_models import AssistantRequest, QuestionType
+        from drawing_graph.assistant_question_llm import (
+            FakeQuestionUnderstandingModelClient,
+            QuestionUnderstandingCandidate,
+        )
+
+        client = FakeQuestionUnderstandingModelClient(
+            QuestionUnderstandingCandidate(
+                question_type="candidate_relations",
+                confidence=0.8,
+            )
+        )
+        service = QuestionUnderstandingService(model_client=client)
+        result = service.understand(
+            AssistantRequest(
+                request_id="r1",
+                question="这页的关系情况",
+                scope_hint=AssistantScope(page_id="page:1"),
+            )
+        )
+        self.assertEqual(result.question_type, QuestionType.CANDIDATE_RELATIONS.value)
+        self.assertTrue(result.required_evidence)
+
+    def test_llm_fallback_failure_keeps_unknown_with_reason_code(self) -> None:
+        from drawing_graph.assistant_models import AssistantRequest, ReasonCode
+        from drawing_graph.assistant_question_llm import (
+            QuestionUnderstandingModelClient,
+        )
+
+        class _BoomClient(QuestionUnderstandingModelClient):
+            def understand(self, question, scope=None):
+                raise RuntimeError("boom")
+
+        service = QuestionUnderstandingService(model_client=_BoomClient())
+        result = service.understand(
+            AssistantRequest(request_id="r1", question="今天天气怎么样")
+        )
+        self.assertEqual(result.question_type, "unknown_or_unsupported")
+        self.assertIn(
+            ReasonCode.QUESTION_UNDERSTANDING_FALLBACK_FAILED.value,
+            result.unsupported_parts,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
