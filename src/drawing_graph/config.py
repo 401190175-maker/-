@@ -406,48 +406,6 @@ class AssistantHttpConfig:
     log_level: str = "INFO"
 
 
-@dataclass(frozen=True)
-class FeedbackHttpConfig:
-    """Immutable product feedback HTTP settings from environment variables."""
-
-    host: str = "127.0.0.1"
-    port: int = 8002
-    api_token: str = field(default="", repr=False)
-    max_request_bytes: int = 65536
-    default_permissions: tuple[str, ...] = ("record_feedback",)
-    allow_candidate_review: bool = False
-    docs_enabled: bool = False
-    log_level: str = "INFO"
-
-    @classmethod
-    def from_env(cls) -> "FeedbackHttpConfig":
-        import os
-
-        permissions = tuple(
-            part.strip()
-            for part in os.environ.get(
-                "FEEDBACK_HTTP_DEFAULT_PERMISSIONS",
-                "record_feedback",
-            ).split(",")
-            if part.strip()
-        )
-        return cls(
-            host=os.environ.get("FEEDBACK_HTTP_HOST", "127.0.0.1"),
-            port=int(os.environ.get("FEEDBACK_HTTP_PORT", "8002")),
-            api_token=os.environ.get("FEEDBACK_HTTP_API_TOKEN", ""),
-            max_request_bytes=int(
-                os.environ.get("FEEDBACK_HTTP_MAX_REQUEST_BYTES", "65536")
-            ),
-            default_permissions=permissions,
-            allow_candidate_review=os.environ.get(
-                "FEEDBACK_HTTP_ALLOW_CANDIDATE_REVIEW",
-                "0",
-            ).lower() in {"1", "true", "yes"},
-            docs_enabled=os.environ.get("FEEDBACK_HTTP_DOCS_ENABLED", "0").lower()
-            in {"1", "true", "yes"},
-            log_level=os.environ.get("FEEDBACK_HTTP_LOG_LEVEL", "INFO").strip().upper(),
-        )
-
     @classmethod
     def from_env(cls) -> "AssistantHttpConfig":
         """Create a validated product HTTP configuration from process environment."""
@@ -540,6 +498,49 @@ class FeedbackHttpConfig:
             f"docs_enabled={self.docs_enabled!r}, "
             f"log_level={self.log_level!r}"
             ")"
+        )
+
+
+@dataclass(frozen=True)
+class FeedbackHttpConfig:
+    """Immutable product feedback HTTP settings from environment variables."""
+
+    host: str = "127.0.0.1"
+    port: int = 8002
+    api_token: str = field(default="", repr=False)
+    max_request_bytes: int = 65536
+    default_permissions: tuple[str, ...] = ("record_feedback",)
+    allow_candidate_review: bool = False
+    docs_enabled: bool = False
+    log_level: str = "INFO"
+
+    @classmethod
+    def from_env(cls) -> "FeedbackHttpConfig":
+        import os
+
+        permissions = tuple(
+            part.strip()
+            for part in os.environ.get(
+                "FEEDBACK_HTTP_DEFAULT_PERMISSIONS",
+                "record_feedback",
+            ).split(",")
+            if part.strip()
+        )
+        return cls(
+            host=os.environ.get("FEEDBACK_HTTP_HOST", "127.0.0.1"),
+            port=int(os.environ.get("FEEDBACK_HTTP_PORT", "8002")),
+            api_token=os.environ.get("FEEDBACK_HTTP_API_TOKEN", ""),
+            max_request_bytes=int(
+                os.environ.get("FEEDBACK_HTTP_MAX_REQUEST_BYTES", "65536")
+            ),
+            default_permissions=permissions,
+            allow_candidate_review=os.environ.get(
+                "FEEDBACK_HTTP_ALLOW_CANDIDATE_REVIEW",
+                "0",
+            ).lower() in {"1", "true", "yes"},
+            docs_enabled=os.environ.get("FEEDBACK_HTTP_DOCS_ENABLED", "0").lower()
+            in {"1", "true", "yes"},
+            log_level=os.environ.get("FEEDBACK_HTTP_LOG_LEVEL", "INFO").strip().upper(),
         )
 
 
