@@ -552,6 +552,7 @@ python -m unittest tests.test_assistant_evidence_fusion_models tests.test_assist
 
 - HTTP：`src/drawing_graph/assistant_http.py` + `src/drawing_graph/assistant_http_models.py` + `src/drawing_graph/assistant_http_runtime.py` + `scripts/serve_drawing_assistant.py` 提供 `POST /api/v1/drawing-assistant/ask`、`GET /health/live`、`GET /health/ready`。
 - MCP：`src/drawing_graph/assistant_mcp_models.py` + `assistant_mcp_tools.py` + `assistant_mcp_runtime.py` + `assistant_mcp_server.py` + `scripts/serve_drawing_assistant_mcp.py` 提供本地 STDIO 只读工具 `ask_drawing_assistant`，structuredContent 来自 `AnswerPackage` JSON-safe 投影，TextContent 只概述状态与数量、不新增事实。
+- 反馈 HTTP：`src/drawing_graph/assistant_feedback_http.py` + `assistant_feedback_http_models.py` + `assistant_feedback_http_runtime.py` + `scripts/serve_feedback_http.py` 提供 `POST /api/v1/drawing-assistant/feedback`（confirm/reject/correct/request_review）、`GET /health/live`、`GET /health/ready`；默认 in-memory store，`FEEDBACK_HTTP_*` 环境变量配置。
 - 边界：默认 `write_back=false`，HTTP/MCP 首版不提供写回；HTTP 检测到 `write_back=true`/`allow_write_back=true` 返回 403；并发上限、请求超时、请求体限制、认证与错误映射均稳定脱敏；候选关系不是正式事实。
 - 环境变量：HTTP 使用 `DRAWING_GRAPH_ASSISTANT_HTTP_*`（host/port/token/body limit/timeout/concurrency/docs/log level），MCP 使用 `NEO4J_*` 与 `DRAWING_GRAPH_ASSISTANT_MCP_LOG_LEVEL`。
 
@@ -565,6 +566,8 @@ python -m unittest tests.test_assistant_evidence_fusion_models tests.test_assist
 - 可选接入：`DrawingAssistantService` 构造注入 `traceability_service=None`；`create_drawing_assistant_service(..., traceability_service=None, trace_store=None)` 可选装配；未注入时默认行为不变。
 - 边界：trace 只写 `TraceStorePort`，不新增 Neo4j schema，不写业务事实，不把候选关系/`matched_candidate` 写成正式关系；trace 存储失败不把答案标记为失败；输出脱敏。
 - 本节只描述追溯职责；反馈状态机、权限、审计与 `CandidateReviewService` 受控对接已由产品实现层 08 独立实现，见下一节。外部反馈 API 仍未实现。
+
+外部反馈 HTTP API 已实现（默认 in-memory store，见反馈闭环节）；外部持久化 store 仍未实现。
 
 追溯专项离线/fake 验证入口：`python -m unittest tests.test_assistant_trace_models tests.test_assistant_trace_store tests.test_assistant_trace_builder tests.test_assistant_claim_trace tests.test_assistant_traceability_service tests.test_assistant_trace_boundaries -v`。live Neo4j 未验证。
 

@@ -142,6 +142,14 @@ python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-proj
 
 配置 `DASHSCOPE_API_KEY` 与 `DRAWING_GRAPH_EMBEDDING_MODEL`（默认 `text-embedding-v3`）后，`search-pages` 自动启用向量语义检索（余弦 top-k 与词面混合），可用 `--semantic-threshold`/`--semantic-top-k`/`--embed-page-limit` 调节；向量缓存 `.search_cache/page_embeddings.sqlite` 可重建，embedding 不可用时自动降级词面。
 
+反馈 API（外部提交 confirm/reject/correct/request_review）：
+
+```powershell
+python scripts\serve_feedback_http.py
+```
+
+默认监听 `127.0.0.1:8002`；`POST /api/v1/drawing-assistant/feedback` 请求体 `{"action":"confirm|reject|correct|request_review","claim_id":"claim:...","reason":"可选","correction":"可选"}`。环境变量：`FEEDBACK_HTTP_API_TOKEN`（配置后要求 Bearer token）、`FEEDBACK_HTTP_DEFAULT_PERMISSIONS`（默认 `record_feedback`）、`FEEDBACK_HTTP_ALLOW_CANDIDATE_REVIEW`（默认 0）。`confirm/correct` 只记录事件与审计、不改变 `fact_kind`；默认 in-memory store，外部持久化 store 未实现。
+
 这些命令输出 JSON。成功时 `status` 为 `ok`；查不到数据时通常返回 `NOT_FOUND`。
 
 ## 6. Neo4j Browser 快速检查

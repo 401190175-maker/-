@@ -113,6 +113,7 @@ Skill -> MCP client -> STDIO MCP adapter -> DrawingGraphQAService
 - QA 层依赖方向固定为 `QA adapter -> DrawingGraphQAService -> DrawingGraphToolFacade -> ports/services -> repository/Neo4j`（CLI、HTTP 与 MCP adapter 同级）；QAService 不创建 Neo4j driver、不写 Cypher、不读取环境变量，adapter 只在最外层管理 driver 生命周期。
 - 产品公共合同与通用检索闭环只经 `DrawingGraphToolFacade` 白名单只读方法；01 问题理解、03 语义缺口决策、04 多模态识别执行、05 证据融合、06 答案生成、07 只读总编排/追溯和 08 反馈已实现。产品级只读 CLI/HTTP/MCP 只暴露问答；追溯通过可选 `TraceabilityService` 写产品运行审计 store，反馈通过独立 `FeedbackService` 写 feedback store/审计，只有 `request_review` 且权限与候选条件满足时才进入 `CandidateReviewService`。默认 `write_back=false`；07 拒绝问答写回授权，调用 04 时固定 `write_back=false`，调用 05 时固定 `write_back_policy=None`；`confirm/reject/correct` 不改变 `fact_kind`，候选关系不是正式事实。外部产品级 Web UI 与反馈入口、外部持久化 store 与多用户账号集成仍未实现。
 - 业务逻辑集中在 `src/drawing_graph/`，按扫描、校验、规范化、映射、持久化、审计、查询和关系增强拆分。
+- 外部反馈 HTTP API 已实现（默认 in-memory store）；外部产品级 Web UI、外部持久化 store 与多用户账号集成仍未实现。
 - Schema 初始化和数据导入分离，导入过程不隐式修改数据库结构。
 - Neo4j 写入使用稳定业务 ID、固定标签/关系白名单和参数化 Cypher。
 - 查询服务本身只提供预定义 Python 内部接口；HTTP 只能经由 QA adapter 的版本化只读路由使用，不开放任意 Cypher。
