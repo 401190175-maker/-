@@ -22,6 +22,7 @@ class PageSearchMatch:
     page_id: str
     page_title: str
     hits: tuple[PageSearchHit, ...] = field(default_factory=tuple)
+    semantic: bool = False
 
 
 @dataclass(frozen=True)
