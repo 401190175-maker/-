@@ -24,16 +24,18 @@ _SCOPE_FIELD_BY_PREFIX = {
     "page": "page_id",
     "table": "table_id",
     "claim": "claim_id",
+    "set": "drawing_set_id",
+    "drawing_set": "drawing_set_id",
 }
 
 _ID_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])"
-    r"(?P<prefix>cross_section|table_caption|element|block|page|table|claim):"
-    r"(?P<id>[A-Za-z0-9_][A-Za-z0-9_.\-]*)"
+    r"(?P<prefix>cross_section|table_caption|element|block|page|table|claim|drawing_set|set):"
+    r"(?P<id>[A-Za-z0-9_][A-Za-z0-9_.:\-]*)"
 )
 
 _QUERY_SNIPPET_WORDS = re.compile(
-    r"\b(?:MATCH|OPTIONAL\s+MATCH|RETURN|WHERE|MERGE|CREATE|DELETE|SET|UNWIND|WITH)\b",
+    r"\b(?:MATCH|OPTIONAL\s+MATCH|RETURN|WHERE|MERGE|CREATE|DELETE|SET|UNWIND|WITH)\b(?!:)",
     re.IGNORECASE,
 )
 
