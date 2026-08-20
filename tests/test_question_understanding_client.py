@@ -84,5 +84,48 @@ class HttpQuestionUnderstandingClientTests(unittest.TestCase):
             client.understand("哪些图关于排水")
 
 
+class EnvironmentWiringTests(unittest.TestCase):
+    def test_from_env_returns_client_when_key_present(self) -> None:
+        import os
+        from unittest import mock
+
+        from drawing_graph.question_understanding_client import (
+            question_understanding_client_from_env,
+        )
+
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DASHSCOPE_API_KEY": "k",
+                "DRAWING_GRAPH_QWEN_MODEL": "qwen3-vl-plus",
+                "DRAWING_GRAPH_QWEN_BASE_URL": "https://example.com/v1",
+            },
+            clear=False,
+        ):
+            client = question_understanding_client_from_env()
+        self.assertIsNotNone(client)
+        self.assertEqual(client._config.api_key, "k")
+
+    def test_from_env_returns_none_without_key(self) -> None:
+        import os
+        from unittest import mock
+
+        from drawing_graph.question_understanding_client import (
+            question_understanding_client_from_env,
+        )
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            client = question_understanding_client_from_env()
+        self.assertIsNone(client)
+
+    def test_reason_code_exists(self) -> None:
+        from drawing_graph.assistant_models import ReasonCode
+
+        self.assertEqual(
+            ReasonCode.QUESTION_UNDERSTANDING_FALLBACK_FAILED.value,
+            "question_understanding_fallback_failed",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

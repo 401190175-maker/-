@@ -92,3 +92,26 @@ class HttpQuestionUnderstandingClient(QuestionUnderstandingModelClient):
 
         response = requests.post(url, headers=headers, json=body, timeout=timeout)
         return response.status_code, response.text
+
+
+def question_understanding_client_from_env() -> HttpQuestionUnderstandingClient | None:
+    """Build the HTTP client from environment when an API key is present."""
+
+    import os
+
+    api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
+    if not api_key:
+        return None
+    return HttpQuestionUnderstandingClient(
+        QuestionUnderstandingClientConfig(
+            model=os.environ.get("DRAWING_GRAPH_QWEN_MODEL", "qwen3-vl-plus").strip(),
+            base_url=os.environ.get(
+                "DRAWING_GRAPH_QWEN_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ).strip(),
+            timeout_seconds=float(
+                os.environ.get("DRAWING_GRAPH_QWEN_TIMEOUT_SECONDS", "60.0")
+            ),
+            api_key=api_key,
+        )
+    )

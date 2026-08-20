@@ -120,6 +120,7 @@ class ReasonCode(str, Enum):
     MULTI_INTENT_AMBIGUOUS = "multi_intent_ambiguous"
     UNSUPPORTED_QUESTION = "unsupported_question"
     MODEL_OUTPUT_INVALID = "model_output_invalid"
+    QUESTION_UNDERSTANDING_FALLBACK_FAILED = "question_understanding_fallback_failed"
     EVIDENCE_COMPLETE = "evidence_complete"
     EVIDENCE_MISSING = "evidence_missing"
     OBSERVATION_MISSING = "observation_missing"
