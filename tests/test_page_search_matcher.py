@@ -26,5 +26,22 @@ class TextMatcherTests(unittest.TestCase):
         self.assertFalse(matcher.matches("   ", "任意文本"))
 
 
+class SynonymExpansionMatcherTests(unittest.TestCase):
+    def test_expands_query_token(self) -> None:
+        from drawing_graph.page_search_matcher import SynonymExpansionMatcher
+
+        matcher = SynonymExpansionMatcher()
+        self.assertTrue(matcher.matches("排水", "本页含雨水管"))
+        self.assertTrue(matcher.matches("挡土墙", "挡墙结构"))
+        self.assertTrue(matcher.matches("混凝土", "砼"))
+
+    def test_plain_token_still_matches(self) -> None:
+        from drawing_graph.page_search_matcher import SynonymExpansionMatcher
+
+        matcher = SynonymExpansionMatcher()
+        self.assertTrue(matcher.matches("C35", "强度 C35"))
+        self.assertFalse(matcher.matches("C35", "强度 C30"))
+
+
 if __name__ == "__main__":
     unittest.main()
