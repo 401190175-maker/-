@@ -118,6 +118,7 @@ class ReasonCodeTests(unittest.TestCase):
                 "multi_intent_ambiguous",
                 "unsupported_question",
                 "model_output_invalid",
+                "question_understanding_fallback_failed",
                 "evidence_complete",
                 "evidence_missing",
                 "observation_missing",

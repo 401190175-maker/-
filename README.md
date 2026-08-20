@@ -279,6 +279,10 @@ python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-proj
 
 `search-pages` 返回命中页（`matches`，含命中片段与元素 ID）与 `coverage`（扫描/缓存/本次识别/跳过）。`--allow-recognition` 对无缓存观察的页面按需识别，默认 dry-run；显式持久化识别缓存需追加 `--write-back`。无命中返回 `NOT_FOUND` 是正常状态。
 
+查询词支持域内同义词展开（如 `排水` 可命中“雨水管/管道”、`挡土墙` 可命中“挡墙”、`混凝土` 可命中“砼”），词表见 `src/drawing_graph/page_search_matcher.py` 的 `DOMAIN_SYNONYMS`。
+
+问题理解支持可选的 LLM 兜底：配置 `DASHSCOPE_API_KEY`（及可选的 `DRAWING_GRAPH_QWEN_MODEL`/`DRAWING_GRAPH_QWEN_BASE_URL`/`DRAWING_GRAPH_QWEN_TIMEOUT_SECONDS`）后，规则未命中的问题会经约束模型客户端分类；无 key 时保持纯规则。
+
 `recognize-page-semantics` 默认 `write_back=false`，只返回本次临时 `recognition_run_id`、observation 和 interpretation；只有显式传入 `--write-back` 才会通过 facade 进入受控语义证据写回流程。使用 Qwen 时需要当前进程已配置 `DRAWING_GRAPH_RECOGNITION_PROVIDER=qwen` 和 `DASHSCOPE_API_KEY`，命令参数和输出不会包含真实 API key。
 
 Tool facade 的单元测试不需要真实 Neo4j 或真实云模型。真实 Neo4j 集成测试必须单独配置 disposable 测试库环境变量 `NEO4J_TEST_URI`、`NEO4J_TEST_USER` 和 `NEO4J_TEST_PASSWORD`；如果这些测试被跳过，跳过不等于通过，不能声称 live Neo4j 已验证。

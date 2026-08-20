@@ -138,6 +138,8 @@ python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-proj
 
 返回 `matches`（命中页 + 命中片段）与 `coverage`（扫描/缓存/本次识别/跳过）；无命中返回 `NOT_FOUND` 是正常状态。`--allow-recognition` 按需识别未缓存页面（默认 dry-run），显式持久化缓存需 `--write-back`。
 
+`search-pages` 支持域内同义词展开（`排水`↔`雨水/管道`、`挡土墙`↔`挡墙`、`混凝土`↔`砼` 等，见 `DOMAIN_SYNONYMS`）。配置 `DASHSCOPE_API_KEY` 后启用 LLM 问题理解兜底（规则未命中时），无 key 保持纯规则。
+
 这些命令输出 JSON。成功时 `status` 为 `ok`；查不到数据时通常返回 `NOT_FOUND`。
 
 ## 6. Neo4j Browser 快速检查
