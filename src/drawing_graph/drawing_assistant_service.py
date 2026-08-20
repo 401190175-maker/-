@@ -30,6 +30,8 @@ from .assistant_models import (
     TextRenderMode,
 )
 from .assistant_evidence_fusion_models import EvidenceFusionRequest
+from .page_search_answer_builder import PageContentSearchAnswerBuilder
+from .page_search_service import PageContentSearchService
 from .tool_models import BBox, SemanticTargetInput
 
 
@@ -291,6 +293,9 @@ class DrawingAssistantService:
         target_grouper: RecognitionTargetGrouper | None = None,
         aggregator: AnswerPackageAggregator | None = None,
         traceability_service: object | None = None,
+        page_search_service: PageContentSearchService | None = None,
+        page_search_answer_builder: PageContentSearchAnswerBuilder | None = None,
+        page_search_recognize_limit: int = 10,
     ) -> None:
         self.question_service = question_service
         self.retrieval_service = retrieval_service
@@ -302,6 +307,11 @@ class DrawingAssistantService:
         self.target_grouper = target_grouper or RecognitionTargetGrouper()
         self.aggregator = aggregator or AnswerPackageAggregator()
         self.traceability_service = traceability_service
+        self.page_search_service = page_search_service or (
+            PageContentSearchService(self.facade) if self.facade is not None else None
+        )
+        self.page_search_answer_builder = page_search_answer_builder or PageContentSearchAnswerBuilder()
+        self.page_search_recognize_limit = page_search_recognize_limit
 
     def answer(
         self,
@@ -351,6 +361,8 @@ class DrawingAssistantService:
         question_result: QuestionUnderstandingResult,
         policy: AssistantExecutionPolicy,
     ) -> AnswerPackage:
+        if question_result.question_type == QuestionType.PAGE_CONTENT_SEARCH.value:
+            return self._answer_page_content_search(request, question_result)
         try:
             retrieval_bundle = self.retrieval_service.retrieve(
                 question_result,
@@ -387,6 +399,34 @@ class DrawingAssistantService:
         return self.answer_service.generate(
             generation_request,
             self._answer_policy(policy),
+        )
+
+    def _answer_page_content_search(
+        self,
+        request: AssistantRequest,
+        question_result: QuestionUnderstandingResult,
+    ) -> AnswerPackage:
+        scope = question_result.scope
+        if scope is None or scope.drawing_set_id is None:
+            raise AssistantExecutionError(
+                "missing_scope",
+                "drawing_set_id is required for page content search",
+            )
+        if self.page_search_service is None:
+            raise AssistantExecutionError(
+                "search_unavailable",
+                "page content search service is not configured",
+            )
+        result = self.page_search_service.search(
+            scope.drawing_set_id,
+            request.question,
+            allow_recognition=request.allow_recognition,
+            recognize_page_limit=self.page_search_recognize_limit,
+        )
+        return self.page_search_answer_builder.build(
+            request.request_id,
+            scope,
+            result,
         )
 
     def _execute_recognition(
