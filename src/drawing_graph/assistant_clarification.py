@@ -29,6 +29,7 @@ _REQUIRED_SCOPE_FIELDS = {
     "table_caption_status": ("page_id",),
     "drawing_diagnostic": ("page_id",),
     "source_trace": ("claim_id", "page_id", "block_id"),
+    "page_content_search": ("drawing_set_id",),
 }
 
 

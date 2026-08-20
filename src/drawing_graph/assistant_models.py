@@ -57,6 +57,7 @@ class QuestionType(str, Enum):
     DRAWING_DIAGNOSTIC = "drawing_diagnostic"
     SOURCE_TRACE = "source_trace"
     COMPARISON = "comparison"
+    PAGE_CONTENT_SEARCH = "page_content_search"
     CLARIFICATION_REQUIRED = "clarification_required"
     UNKNOWN_OR_UNSUPPORTED = "unknown_or_unsupported"
 

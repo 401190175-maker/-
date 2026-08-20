@@ -111,4 +111,11 @@ def _evidence_types_for(
         if scope.block_id is not None:
             return (EvidenceType.BLOCK_TRACE,)
         return ()
+    if question_type == QuestionType.PAGE_CONTENT_SEARCH.value:
+        return (
+            EvidenceType.DRAWING_SET_PAGES,
+            EvidenceType.PAGE_SOURCE_FACTS,
+            EvidenceType.TEXT_OBSERVATIONS,
+            EvidenceType.STRUCTURED_INTERPRETATIONS,
+        )
     return ()
