@@ -283,6 +283,8 @@ python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-proj
 
 问题理解支持可选的 LLM 兜底：配置 `DASHSCOPE_API_KEY`（及可选的 `DRAWING_GRAPH_QWEN_MODEL`/`DRAWING_GRAPH_QWEN_BASE_URL`/`DRAWING_GRAPH_QWEN_TIMEOUT_SECONDS`）后，规则未命中的问题会经约束模型客户端分类；无 key 时保持纯规则。
 
+配置 `DASHSCOPE_API_KEY` 且设置 `DRAWING_GRAPH_EMBEDDING_MODEL`（默认 `text-embedding-v3`）后，`search-pages` 启用向量语义检索：查询词与页文本块做余弦相似度 top-k，与词面/同义词结果混合排序；支持 `--semantic-threshold`（默认 0.25）、`--semantic-top-k`（默认 20）、`--embed-page-limit`（默认 20）。向量缓存位于 `.search_cache/page_embeddings.sqlite`（图谱外，可重建），embedding 不可用时自动降级为词面检索。
+
 `recognize-page-semantics` 默认 `write_back=false`，只返回本次临时 `recognition_run_id`、observation 和 interpretation；只有显式传入 `--write-back` 才会通过 facade 进入受控语义证据写回流程。使用 Qwen 时需要当前进程已配置 `DRAWING_GRAPH_RECOGNITION_PROVIDER=qwen` 和 `DASHSCOPE_API_KEY`，命令参数和输出不会包含真实 API key。
 
 Tool facade 的单元测试不需要真实 Neo4j 或真实云模型。真实 Neo4j 集成测试必须单独配置 disposable 测试库环境变量 `NEO4J_TEST_URI`、`NEO4J_TEST_USER` 和 `NEO4J_TEST_PASSWORD`；如果这些测试被跳过，跳过不等于通过，不能声称 live Neo4j 已验证。

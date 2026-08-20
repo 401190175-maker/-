@@ -116,45 +116,50 @@ class PageContentSearchService:
         embedded_now = 0
         embedded_pages = 0
         if self._embedding_client is not None and self._embedding_store is not None:
-            query_vector = self._embedding_client.embed([query])[0]
-            embed_budget = max(0, self._embed_page_limit)
-            for page in pages:
-                if not self._embedding_store.has_page(page.page_id):
-                    if embed_budget <= 0:
-                        continue
-                    content = self._collector.collect(page)
-                    if not content.has_semantic_content:
-                        continue
-                    embed_budget -= 1
-                    self._embed_chunks(content)
-                    embedded_now += 1
-                for kind, _text_hash_value, vector in self._embedding_store.page_vectors(
-                    page.page_id
-                ):
-                    score = cosine_similarity(query_vector, vector)
-                    if score >= self._semantic_threshold:
-                        semantic_candidates.append(
-                            SemanticCandidate(
-                                page_id=page.page_id,
-                                page_title=page.file_stem,
-                                score=score,
-                                kind=kind,
-                                snippet=kind,
+            try:
+                query_vector = self._embedding_client.embed([query])[0]
+                embed_budget = max(0, self._embed_page_limit)
+                for page in pages:
+                    if not self._embedding_store.has_page(page.page_id):
+                        if embed_budget <= 0:
+                            continue
+                        content = self._collector.collect(page)
+                        if not content.has_semantic_content:
+                            continue
+                        embed_budget -= 1
+                        self._embed_chunks(content)
+                        embedded_now += 1
+                    for kind, _text_hash_value, vector in self._embedding_store.page_vectors(
+                        page.page_id
+                    ):
+                        score = cosine_similarity(query_vector, vector)
+                        if score >= self._semantic_threshold:
+                            semantic_candidates.append(
+                                SemanticCandidate(
+                                    page_id=page.page_id,
+                                    page_title=page.file_stem,
+                                    score=score,
+                                    kind=kind,
+                                    snippet=kind,
+                                )
                             )
-                        )
-            matches = list(
-                self._hybrid_scorer.merge(
-                    tuple(matches),
-                    tuple(semantic_candidates),
-                    threshold=self._semantic_threshold,
-                    top_k=self._semantic_top_k,
+                matches = list(
+                    self._hybrid_scorer.merge(
+                        tuple(matches),
+                        tuple(semantic_candidates),
+                        threshold=self._semantic_threshold,
+                        top_k=self._semantic_top_k,
+                    )
                 )
-            )
-            embedded_pages = sum(
-                1
-                for page in pages
-                if self._embedding_store.has_page(page.page_id)
-            )
+                embedded_pages = sum(
+                    1
+                    for page in pages
+                    if self._embedding_store.has_page(page.page_id)
+                )
+            except Exception:
+                # Embedding unavailable: degrade to lexical-only results.
+                embedded_now = 0
+                embedded_pages = 0
         return PageSearchResult(
             matches=tuple(matches),
             coverage=PageSearchCoverage(

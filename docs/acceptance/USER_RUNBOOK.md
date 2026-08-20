@@ -140,6 +140,8 @@ python scripts\drawing_graph_tool.py search-pages --drawing-set-id set:road-proj
 
 `search-pages` 支持域内同义词展开（`排水`↔`雨水/管道`、`挡土墙`↔`挡墙`、`混凝土`↔`砼` 等，见 `DOMAIN_SYNONYMS`）。配置 `DASHSCOPE_API_KEY` 后启用 LLM 问题理解兜底（规则未命中时），无 key 保持纯规则。
 
+配置 `DASHSCOPE_API_KEY` 与 `DRAWING_GRAPH_EMBEDDING_MODEL`（默认 `text-embedding-v3`）后，`search-pages` 自动启用向量语义检索（余弦 top-k 与词面混合），可用 `--semantic-threshold`/`--semantic-top-k`/`--embed-page-limit` 调节；向量缓存 `.search_cache/page_embeddings.sqlite` 可重建，embedding 不可用时自动降级词面。
+
 这些命令输出 JSON。成功时 `status` 为 `ok`；查不到数据时通常返回 `NOT_FOUND`。
 
 ## 6. Neo4j Browser 快速检查

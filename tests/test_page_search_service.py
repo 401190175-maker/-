@@ -272,6 +272,38 @@ class SemanticSearchTests(unittest.TestCase):
             any(match.page_id == "page:2" and match.semantic for match in result.matches)
         )
 
+    def test_embedding_failure_degrades_to_lexical_only(self) -> None:
+        from drawing_graph.hybrid_search_scorer import HybridScorer
+        from drawing_graph.text_embedding_client import TextEmbeddingClient
+
+        class _BoomEmbeddingClient(TextEmbeddingClient):
+            def embed(self, texts):
+                raise RuntimeError("embedding unavailable")
+
+        class _Store:
+            def has_page(self, page_id):
+                return False
+
+            def page_vectors(self, page_id):
+                return ()
+
+            def upsert(self, page_id, kind, element_id, text_hash, model_version, vector):
+                pass
+
+        service = PageContentSearchService(
+            _ObservingFacade(
+                [_page(1)],
+                observed_page_id="page:1",
+                text="排水管道",
+            ),
+            embedding_client=_BoomEmbeddingClient(),
+            embedding_store=_Store(),
+            hybrid_scorer=HybridScorer(),
+        )
+        result = service.search("set:1", "排水")
+        self.assertEqual([m.page_id for m in result.matches], ["page:1"])
+        self.assertEqual(result.coverage.embedded_pages, 0)
+
 
 class SemanticCliTests(unittest.TestCase):
     def test_cli_accepts_semantic_flags(self) -> None:
