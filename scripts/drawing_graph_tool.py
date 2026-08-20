@@ -120,6 +120,15 @@ def _build_parser() -> argparse.ArgumentParser:
     section_matches.add_argument("--page-id")
     section_matches.add_argument("--status", action="append", dest="statuses")
 
+    search_pages = subparsers.add_parser(
+        "search-pages",
+        help="Search page content across one drawing set (read-only).",
+    )
+    search_pages.add_argument("--drawing-set-id", required=True)
+    search_pages.add_argument("--query", required=True)
+    search_pages.add_argument("--allow-recognition", action="store_true")
+    search_pages.add_argument("--recognize-page-limit", type=int, default=10)
+
     return parser
 
 
@@ -188,6 +197,16 @@ def _run_selected_command(facade: Any, args: argparse.Namespace) -> Any:
             cross_section_id=args.cross_section_id,
             page_id=args.page_id,
             statuses=tuple(args.statuses) if args.statuses else None,
+        )
+    if args.command == "search-pages":
+        from drawing_graph.page_search_service import PageContentSearchService
+
+        service = PageContentSearchService(facade)
+        return service.search(
+            args.drawing_set_id,
+            args.query,
+            allow_recognition=args.allow_recognition,
+            recognize_page_limit=args.recognize_page_limit,
         )
     raise ValueError(f"unsupported tool command: {args.command}")
 

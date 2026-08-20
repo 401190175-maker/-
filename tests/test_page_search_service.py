@@ -73,5 +73,43 @@ class PageContentSearchServiceTests(unittest.TestCase):
         self.assertEqual(result.coverage.total_pages, 1)
 
 
+class SearchPagesCliTests(unittest.TestCase):
+    def test_cli_search_pages_prints_ok(self) -> None:
+        import io
+        import json
+        import sys
+
+        import scripts.drawing_graph_tool as cli
+
+        class _Config:
+            neo4j_uri = "bolt://127.0.0.1:7687"
+            neo4j_user = "neo4j"
+            neo4j_password = "x"
+
+        class _Driver:
+            pass
+
+        captured = io.StringIO()
+        original = sys.stdout
+        sys.stdout = captured
+        try:
+            code = cli.main(
+                ["search-pages", "--drawing-set-id", "set:1", "--query", "排水"],
+                config_loader=lambda: _Config(),
+                driver_factory=lambda uri, auth: _Driver(),
+                facade_factory=lambda driver: _ObservingFacade(
+                    [_page(1)],
+                    observed_page_id="page:1",
+                    text="排水管道",
+                ),
+            )
+        finally:
+            sys.stdout = original
+        self.assertEqual(code, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["data"]["matches"][0]["page_id"], "page:1")
+
+
 if __name__ == "__main__":
     unittest.main()
