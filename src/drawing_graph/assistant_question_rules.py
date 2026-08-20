@@ -88,6 +88,28 @@ _DEFAULT_RULES = (
         ),
     ),
     _Rule(
+        rule_id="rule:block_identity_short",
+        question_type=QuestionType.BLOCK_SEMANTIC_IDENTIFICATION.value,
+        patterns=(
+            ("是什么",),
+        ),
+        excluded=(
+            "元素",
+            "图",
+            "页",
+            "候选",
+            "关系",
+            "标题",
+            "断面",
+            "表",
+            "册",
+            "构件",
+            "来源",
+            "出处",
+            "溯源",
+        ),
+    ),
+    _Rule(
         rule_id="rule:element_text_or_meaning",
         question_type=QuestionType.ELEMENT_TEXT_OR_MEANING.value,
         patterns=(
@@ -109,6 +131,23 @@ _DEFAULT_RULES = (
         ),
     ),
     _Rule(
+        rule_id="rule:page_content_search",
+        question_type=QuestionType.PAGE_CONTENT_SEARCH.value,
+        patterns=(
+            ("哪一页",),
+            ("哪些图",),
+            ("哪几张图",),
+            ("哪几页",),
+            ("哪块",),
+            ("关于", "图"),
+            ("涉及",),
+            ("在", "哪一页"),
+            ("查找", "图"),
+            ("搜索", "图"),
+        ),
+        excluded=("关系",),
+    ),
+    _Rule(
         rule_id="rule:section_matches",
         question_type=QuestionType.SECTION_MATCHES.value,
         patterns=(
@@ -116,6 +155,8 @@ _DEFAULT_RULES = (
             ("断面", "匹配"),
             ("标题", "匹配"),
             ("对应哪个标题",),
+            ("剖面", "图块"),
+            ("在哪个图块",),
         ),
     ),
     _Rule(
