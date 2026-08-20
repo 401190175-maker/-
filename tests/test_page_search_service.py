@@ -77,7 +77,9 @@ class SearchPagesCliTests(unittest.TestCase):
     def test_cli_search_pages_prints_ok(self) -> None:
         import io
         import json
+        import os
         import sys
+        from unittest import mock
 
         import scripts.drawing_graph_tool as cli
 
@@ -93,16 +95,17 @@ class SearchPagesCliTests(unittest.TestCase):
         original = sys.stdout
         sys.stdout = captured
         try:
-            code = cli.main(
-                ["search-pages", "--drawing-set-id", "set:1", "--query", "排水"],
-                config_loader=lambda: _Config(),
-                driver_factory=lambda uri, auth: _Driver(),
-                facade_factory=lambda driver: _ObservingFacade(
-                    [_page(1)],
-                    observed_page_id="page:1",
-                    text="排水管道",
-                ),
-            )
+            with mock.patch.dict(os.environ, {}, clear=True):
+                code = cli.main(
+                    ["search-pages", "--drawing-set-id", "set:1", "--query", "排水"],
+                    config_loader=lambda: _Config(),
+                    driver_factory=lambda uri, auth: _Driver(),
+                    facade_factory=lambda driver: _ObservingFacade(
+                        [_page(1)],
+                        observed_page_id="page:1",
+                        text="排水管道",
+                    ),
+                )
         finally:
             sys.stdout = original
         self.assertEqual(code, 0)
@@ -163,7 +166,9 @@ class RecognitionBackfillTests(unittest.TestCase):
 class CacheWriteAuthorizationTests(unittest.TestCase):
     def test_cli_write_back_flag_forwards_to_recognition(self) -> None:
         import io
+        import os
         import sys
+        from unittest import mock
 
         import scripts.drawing_graph_tool as cli
 
@@ -192,20 +197,21 @@ class CacheWriteAuthorizationTests(unittest.TestCase):
         original = sys.stdout
         sys.stdout = captured
         try:
-            code = cli.main(
-                [
-                    "search-pages",
-                    "--drawing-set-id",
-                    "set:1",
-                    "--query",
-                    "排水",
-                    "--allow-recognition",
-                    "--write-back",
-                ],
-                config_loader=lambda: _Config(),
-                driver_factory=lambda uri, auth: _Driver(),
-                facade_factory=lambda driver: _RecordingFacade([_page(1)]),
-            )
+            with mock.patch.dict(os.environ, {}, clear=True):
+                code = cli.main(
+                    [
+                        "search-pages",
+                        "--drawing-set-id",
+                        "set:1",
+                        "--query",
+                        "排水",
+                        "--allow-recognition",
+                        "--write-back",
+                    ],
+                    config_loader=lambda: _Config(),
+                    driver_factory=lambda uri, auth: _Driver(),
+                    facade_factory=lambda driver: _RecordingFacade([_page(1)]),
+                )
         finally:
             sys.stdout = original
         self.assertEqual(code, 0)
@@ -265,6 +271,56 @@ class SemanticSearchTests(unittest.TestCase):
         self.assertTrue(
             any(match.page_id == "page:2" and match.semantic for match in result.matches)
         )
+
+
+class SemanticCliTests(unittest.TestCase):
+    def test_cli_accepts_semantic_flags(self) -> None:
+        import io
+        import json
+        import os
+        import sys
+        from unittest import mock
+
+        import scripts.drawing_graph_tool as cli
+
+        class _Config:
+            neo4j_uri = "bolt://127.0.0.1:7687"
+            neo4j_user = "neo4j"
+            neo4j_password = "x"
+
+        class _Driver:
+            pass
+
+        captured = io.StringIO()
+        original = sys.stdout
+        sys.stdout = captured
+        try:
+            with mock.patch.dict(os.environ, {}, clear=True):
+                code = cli.main(
+                    [
+                        "search-pages",
+                        "--drawing-set-id",
+                        "set:1",
+                        "--query",
+                        "排水",
+                        "--semantic-threshold",
+                        "0.3",
+                        "--semantic-top-k",
+                        "10",
+                    ],
+                    config_loader=lambda: _Config(),
+                    driver_factory=lambda uri, auth: _Driver(),
+                    facade_factory=lambda driver: _ObservingFacade(
+                        [_page(1)],
+                        observed_page_id="page:1",
+                        text="排水管道",
+                    ),
+                )
+        finally:
+            sys.stdout = original
+        self.assertEqual(code, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "ok")
 
 
 if __name__ == "__main__":

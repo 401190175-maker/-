@@ -133,6 +133,9 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly authorize persisting recognition cache.",
     )
+    search_pages.add_argument("--semantic-threshold", type=float, default=0.25)
+    search_pages.add_argument("--semantic-top-k", type=int, default=20)
+    search_pages.add_argument("--embed-page-limit", type=int, default=20)
 
     return parser
 
@@ -204,9 +207,26 @@ def _run_selected_command(facade: Any, args: argparse.Namespace) -> Any:
             statuses=tuple(args.statuses) if args.statuses else None,
         )
     if args.command == "search-pages":
+        from drawing_graph.hybrid_search_scorer import HybridScorer
+        from drawing_graph.page_embedding_store import PageEmbeddingStore
         from drawing_graph.page_search_service import PageContentSearchService
+        from drawing_graph.text_embedding_client import text_embedding_client_from_env
 
-        service = PageContentSearchService(facade)
+        embedding_client = text_embedding_client_from_env()
+        embedding_store = None
+        if embedding_client is not None:
+            cache_dir = PROJECT_ROOT / ".search_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            embedding_store = PageEmbeddingStore(cache_dir / "page_embeddings.sqlite")
+        service = PageContentSearchService(
+            facade,
+            embedding_client=embedding_client,
+            embedding_store=embedding_store,
+            hybrid_scorer=HybridScorer(),
+            semantic_threshold=args.semantic_threshold,
+            semantic_top_k=args.semantic_top_k,
+            embed_page_limit=args.embed_page_limit,
+        )
         return service.search(
             args.drawing_set_id,
             args.query,
