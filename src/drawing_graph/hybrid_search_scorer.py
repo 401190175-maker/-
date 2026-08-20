@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .page_search_service import PageSearchHit, PageSearchMatch
+from .page_search_models import PageSearchHit, PageSearchMatch
 
 
 @dataclass(frozen=True)

@@ -2,46 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from .hybrid_search_scorer import HybridScorer, SemanticCandidate
+from .page_search_models import (
+    PageSearchCoverage,
+    PageSearchHit,
+    PageSearchMatch,
+    PageSearchResult,
+    truncate_snippet as _truncate,
+)
+from .page_embedding_store import PageEmbeddingStore, cosine_similarity
 from .page_search_collector import PageContentCollector
 from .page_search_matcher import SynonymExpansionMatcher, TextMatcher
+from .text_embedding_client import TextEmbeddingClient
 from .tool_models import PageSummary, ToolModelError
 
 
-@dataclass(frozen=True)
-class PageSearchHit:
-    kind: str
-    snippet: str
-    element_id: str | None = None
-
-
-@dataclass(frozen=True)
-class PageSearchMatch:
-    page_id: str
-    page_title: str
-    hits: tuple[PageSearchHit, ...] = field(default_factory=tuple)
-    semantic: bool = False
-
-
-@dataclass(frozen=True)
-class PageSearchCoverage:
-    total_pages: int = 0
-    scanned: int = 0
-    from_cache: int = 0
-    recognized_now: int = 0
-    skipped: int = 0
-
-
-@dataclass(frozen=True)
-class PageSearchResult:
-    matches: tuple[PageSearchMatch, ...] = field(default_factory=tuple)
-    coverage: PageSearchCoverage = field(default_factory=PageSearchCoverage)
-
-
-def _truncate(text: str, limit: int = 120) -> str:
-    return text if len(text) <= limit else text[:limit] + "..."
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class PageContentSearchService:
@@ -53,11 +34,25 @@ class PageContentSearchService:
         collector: PageContentCollector | None = None,
         matcher: TextMatcher | None = None,
         page_batch_size: int = 100,
+        embedding_client: TextEmbeddingClient | None = None,
+        embedding_store: PageEmbeddingStore | None = None,
+        hybrid_scorer: HybridScorer | None = None,
+        embedding_model_version: str = "text-embedding-v3",
+        semantic_threshold: float = 0.25,
+        semantic_top_k: int = 20,
+        embed_page_limit: int = 20,
     ) -> None:
         self._facade = facade
         self._collector = collector or PageContentCollector(facade)
         self._matcher = matcher or SynonymExpansionMatcher()
         self._page_batch_size = page_batch_size
+        self._embedding_client = embedding_client
+        self._embedding_store = embedding_store
+        self._hybrid_scorer = hybrid_scorer or HybridScorer()
+        self._embedding_model_version = embedding_model_version
+        self._semantic_threshold = semantic_threshold
+        self._semantic_top_k = semantic_top_k
+        self._embed_page_limit = embed_page_limit
 
     def search(
         self,
@@ -117,6 +112,49 @@ class PageContentSearchService:
                         ),
                     )
                 )
+        semantic_candidates: list[SemanticCandidate] = []
+        embedded_now = 0
+        embedded_pages = 0
+        if self._embedding_client is not None and self._embedding_store is not None:
+            query_vector = self._embedding_client.embed([query])[0]
+            embed_budget = max(0, self._embed_page_limit)
+            for page in pages:
+                if not self._embedding_store.has_page(page.page_id):
+                    if embed_budget <= 0:
+                        continue
+                    content = self._collector.collect(page)
+                    if not content.has_semantic_content:
+                        continue
+                    embed_budget -= 1
+                    self._embed_chunks(content)
+                    embedded_now += 1
+                for kind, _text_hash_value, vector in self._embedding_store.page_vectors(
+                    page.page_id
+                ):
+                    score = cosine_similarity(query_vector, vector)
+                    if score >= self._semantic_threshold:
+                        semantic_candidates.append(
+                            SemanticCandidate(
+                                page_id=page.page_id,
+                                page_title=page.file_stem,
+                                score=score,
+                                kind=kind,
+                                snippet=kind,
+                            )
+                        )
+            matches = list(
+                self._hybrid_scorer.merge(
+                    tuple(matches),
+                    tuple(semantic_candidates),
+                    threshold=self._semantic_threshold,
+                    top_k=self._semantic_top_k,
+                )
+            )
+            embedded_pages = sum(
+                1
+                for page in pages
+                if self._embedding_store.has_page(page.page_id)
+            )
         return PageSearchResult(
             matches=tuple(matches),
             coverage=PageSearchCoverage(
@@ -125,8 +163,26 @@ class PageContentSearchService:
                 from_cache=from_cache,
                 recognized_now=recognized_now,
                 skipped=skipped,
+                embedded_pages=embedded_pages,
+                embedded_now=embedded_now,
+                semantic_hits=sum(
+                    1 for match in matches if match.semantic
+                ),
             ),
         )
+
+    def _embed_chunks(self, content: PageContent) -> None:
+        for item in content.items:
+            if item.kind in ("observation", "interpretation"):
+                vector = self._embedding_client.embed([item.text])[0]
+                self._embedding_store.upsert(
+                    content.page_id,
+                    item.kind,
+                    item.element_id,
+                    _text_hash(item.text),
+                    self._embedding_model_version,
+                    vector,
+                )
 
     def _enumerate_pages(self, drawing_set_id: str) -> list[PageSummary]:
         pages: list[PageSummary] = []

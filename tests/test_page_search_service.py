@@ -224,5 +224,48 @@ class SynonymSearchTests(unittest.TestCase):
         self.assertEqual([m.page_id for m in result.matches], ["page:1"])
 
 
+class SemanticSearchTests(unittest.TestCase):
+    def test_semantic_candidate_added_when_client_and_store_configured(self) -> None:
+        from drawing_graph.hybrid_search_scorer import HybridScorer
+        from drawing_graph.text_embedding_client import TextEmbeddingClient
+
+        class _EmbeddingClient(TextEmbeddingClient):
+            def embed(self, texts):
+                return [[1.0, 0.0] for _ in texts]
+
+        class _Store:
+            def __init__(self):
+                self._data: dict[tuple[object, ...], list[float]] = {}
+
+            def has_page(self, page_id):
+                return page_id == "page:2"
+
+            def page_vectors(self, page_id):
+                if page_id == "page:2":
+                    return (("observation", "h", [1.0, 0.0]),)
+                return ()
+
+            def upsert(self, page_id, kind, element_id, text_hash, model_version, vector):
+                self._data[(page_id, kind, element_id, text_hash)] = vector
+
+        service = PageContentSearchService(
+            _ObservingFacade(
+                [_page(1), _page(2)],
+                observed_page_id="page:1",
+                text="道路平面图",
+            ),
+            embedding_client=_EmbeddingClient(),
+            embedding_store=_Store(),
+            hybrid_scorer=HybridScorer(),
+            semantic_threshold=0.5,
+            semantic_top_k=20,
+        )
+        result = service.search("set:1", "排水")
+        self.assertEqual(result.coverage.embedded_pages, 1)
+        self.assertTrue(
+            any(match.page_id == "page:2" and match.semantic for match in result.matches)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
