@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .page_search_collector import PageContentCollector
-from .page_search_matcher import TextMatcher
+from .page_search_matcher import SynonymExpansionMatcher, TextMatcher
 from .tool_models import PageSummary, ToolModelError
 
 
@@ -55,7 +55,7 @@ class PageContentSearchService:
     ) -> None:
         self._facade = facade
         self._collector = collector or PageContentCollector(facade)
-        self._matcher = matcher or TextMatcher()
+        self._matcher = matcher or SynonymExpansionMatcher()
         self._page_batch_size = page_batch_size
 
     def search(

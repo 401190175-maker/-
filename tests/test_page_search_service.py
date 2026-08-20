@@ -212,5 +212,17 @@ class CacheWriteAuthorizationTests(unittest.TestCase):
         self.assertEqual(calls[0]["write_back"], True)
 
 
+class SynonymSearchTests(unittest.TestCase):
+    def test_search_hits_synonym_text(self) -> None:
+        facade = _ObservingFacade(
+            [_page(1)],
+            observed_page_id="page:1",
+            text="雨水管布置",
+        )
+        service = PageContentSearchService(facade)
+        result = service.search("set:1", "排水")
+        self.assertEqual([m.page_id for m in result.matches], ["page:1"])
+
+
 if __name__ == "__main__":
     unittest.main()
