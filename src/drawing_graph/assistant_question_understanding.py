@@ -25,6 +25,13 @@ from .assistant_question_trace import QuestionUnderstandingTraceBuilder
 from .assistant_scope_resolution import ScopeResolver
 
 
+_LLM_FALLBACK_TYPES = frozenset(
+    {
+        QuestionType.PAGE_CONTENT_SEARCH.value,
+    }
+)
+
+
 class QuestionUnderstandingService:
     """问题理解闭环入口：把请求稳定转换为下游可消费的结果。"""
 
@@ -65,6 +72,23 @@ class QuestionUnderstandingService:
         scope = scope_result.scope
 
         if route_result.question_type == QuestionType.UNKNOWN_OR_UNSUPPORTED.value:
+            if self.model_client is not None:
+                try:
+                    candidate = self.model_client.understand(
+                        normalized,
+                        scope_result.scope,
+                    )
+                    if candidate.question_type in _LLM_FALLBACK_TYPES:
+                        return QuestionUnderstandingResult(
+                            request_id=request.request_id,
+                            question_type=candidate.question_type,
+                            scope=scope,
+                            confidence=candidate.confidence,
+                            ambiguities=candidate.ambiguities,
+                            unsupported_parts=candidate.unsupported_parts,
+                        )
+                except Exception:
+                    pass
             return QuestionUnderstandingResult(
                 request_id=request.request_id,
                 question_type=QuestionType.UNKNOWN_OR_UNSUPPORTED.value,
